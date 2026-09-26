@@ -1,0 +1,40 @@
+# Values for the ${VAR} placeholders in tenant connections.
+#
+# PLATFORM-OWNED. A tenant writes `host: ${HR_WAREHOUSE_HOST}` in their app.yaml and
+# the value appears here, per environment. That split is the point:
+#
+#   the tenant says   WHICH variable their connection needs
+#   the platform says WHAT it is in dev, uat and prod
+#
+# so one manifest covers every environment and a team cannot point a production app
+# at something nobody registered.
+#
+# WHAT GOES IN HERE: hosts, ports, paths, base URLs. Things that are configuration.
+#
+# WHAT NEVER GOES IN HERE: a credential. These values become environment variables,
+# readable by anything that can see the process. Credentials go in the secret store
+# via `secret:`, are fetched at the point of use, and are never held in a variable.
+# `insights doctor` and the deploy gate both refuse a value here that looks like one.
+#
+# In production this file is rendered into the task definition / pod spec for each
+# app by the deploy pipeline. Locally, `insights up` and `insights run` export the
+# `local:` block for you.
+
+local:
+  # The stubs `insights up` starts. Ports follow --port, so these are defaults.
+  INSIGHTS_DIRECTORY_URL: "http://127.0.0.1:8081"
+
+dev:
+  HR_WAREHOUSE_HOST: "adb-1234567890.7.azuredatabricks.net"
+  HR_WAREHOUSE_HTTP_PATH: "/sql/1.0/warehouses/dev00warehouse"
+  INSIGHTS_DIRECTORY_URL: "https://directory.dev.internal.bms.com"
+
+uat:
+  HR_WAREHOUSE_HOST: "adb-1234567890.7.azuredatabricks.net"
+  HR_WAREHOUSE_HTTP_PATH: "/sql/1.0/warehouses/uat00warehouse"
+  INSIGHTS_DIRECTORY_URL: "https://directory.uat.internal.bms.com"
+
+prod:
+  HR_WAREHOUSE_HOST: "adb-9876543210.1.azuredatabricks.net"
+  HR_WAREHOUSE_HTTP_PATH: "/sql/1.0/warehouses/prd00warehouse"
+  INSIGHTS_DIRECTORY_URL: "https://directory.internal.bms.com"

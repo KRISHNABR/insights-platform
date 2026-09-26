@@ -72,7 +72,7 @@ uvx --from git+https://github.com/KRISHNABR/insights-sdk.git@v1 insights new-app
 <summary>Why the CLI ships inside the SDK, and when to use which</summary>
 
 `insights` is an entry point on the `insights-sdk` package rather than a separate
-`insights-cli`, because `insights doctor` has to validate your manifest with **exactly
+`insights-cli`, because `uv run insights doctor` has to validate your manifest with **exactly
 the code your app will run**. Split them and `doctor` either depends on the SDK anyway
 — two version numbers, nothing gained — or reimplements the validation, and then CI
 says fine while the runtime says no. That is the worst failure a platform can have.
@@ -87,6 +87,10 @@ So there are two ways to run it, and both are correct:
 Inside a repo, prefer `uv run insights`. If the global CLI is on 0.3 and your app pins
 0.1, the global one would check rules your app does not follow.
 </details>
+
+> **Which form to type, in one line:** `insights new-app` (there is no project yet),
+> `uv run insights <everything-else>` (from inside your repo, so it uses *your* pinned
+> SDK). Both are the same program.
 
 ```bash
 insights new-app forecast-dashboard \
@@ -116,7 +120,7 @@ not check the rest. You declare a runtime
 image. The four workflow files are four lines each and call one platform pipeline. All of it is
 **generated rather than copied from a template**, so when we improve it you get the improvement
 by upgrading the SDK; you don't inherit a snapshot of what we thought was good eighteen months
-ago. `insights upgrade-scaffold` re-renders exactly the files we own and touches nothing else.
+ago. `uv run insights upgrade-scaffold` re-renders exactly the files we own and touches nothing else.
 
 `app.yaml` is your whole contract with the platform:
 
@@ -131,7 +135,7 @@ access:
   manage:
     owners:       [MG-DEMAND-PLANNING]      # approve prod; request data; answer for it
     contributors: [MG-DEMAND-PLANNING-ENG]  # deploy dev/uat, read logs. NOT prod
-    readers:      []                        # see it in `insights status`, nothing more
+    readers:      []                        # see it in `uv run insights status`, nothing more
 
   # WHO MAY USE THE RUNNING APP — checked by require_role() in your code
   roles:
@@ -203,8 +207,8 @@ app directly with `python main.py`, every authorization check fails, and so does
 `connect()`. That is not a bug. Identity is only believed when the platform edge
 asserts it, so an app running without the edge has a caller with no groups —
 deliberately, because the alternative is an app that behaves differently in production
-than on your laptop, in the one area where that is dangerous. Use `insights run` or
-`insights up`.
+than on your laptop, in the one area where that is dangerous. Use `uv run insights run` or
+`uv run insights up`.
 
 ---
 
@@ -268,11 +272,11 @@ uv run insights connections --probe  # actually open each one
 ## 4 · Check it before you push
 
 ```bash
-insights doctor
+uv run insights doctor
 ```
 
 ```
-insights doctor  (sdk 0.1.0)
+uv run insights doctor  (sdk 0.1.0)
 
   ok    manifest app.yaml: forecast-dashboard (web, team demand-planning)
   ok    connection hr-warehouse (databricks-sql, secret 'hr-warehouse-token' present)
@@ -288,11 +292,11 @@ passes there, and if it fails you found out in two seconds instead of two minute
 Run it locally the way the platform runs it:
 
 ```bash
-insights run        # jobs
-insights up         # the whole local platform, including the edge
+uv run insights run        # jobs
+uv run insights up         # the whole local platform, including the edge
 ```
 
-`insights up` starts a stub warehouse, a stub directory API, a fake secret store, every
+`uv run insights up` starts a stub warehouse, a stub directory API, a fake secret store, every
 registered app, the console and the edge on `localhost:8080`. Sign in by adding
 `?as=krishna@corp.example` to any URL once — that is the entire local login.
 
@@ -348,12 +352,12 @@ Three things worth knowing:
   `access.manage` in your manifest, not from your workflow files — which are four lines and
   call ours.
 - **In dev your schedule is disarmed.** A job deploys to dev but won't fire on its own; run it
-  by hand with `insights run`. Nobody wants a half-finished report emailing people at 06:00.
+  by hand with `uv run insights run`. Nobody wants a half-finished report emailing people at 06:00.
 
 **Know it's healthy:**
 
 ```bash
-insights status
+uv run insights status
 ```
 
 ```
@@ -422,7 +426,7 @@ We're two to three people, so here's an honest triage:
 
 | Situation | Do this |
 |---|---|
-| `insights doctor` fails | The message says what and usually how. Start there |
+| `uv run insights doctor` fails | The message says what and usually how. Start there |
 | A connection fails with `auth` | Your credential — check the secret's value and expiry |
 | A connection fails with `tls` or `network` | Ours — tell us the host and paste the error |
 | You need a data source we don't support | Talk to us early. It's a platform change, and it's a queue |
