@@ -8,3 +8,6 @@ build/
 # local stub state - regenerate with `insights up`
 *.db
 sinks/
+
+# written by `insights up`; the real registry is apps.json
+control/registry/apps.local.json

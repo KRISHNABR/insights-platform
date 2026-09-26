@@ -45,8 +45,13 @@ app = FastAPI(title="insights-edge")
 
 
 def _registered() -> dict:
-    path = REGISTRY / "apps.json"
-    return json.loads(path.read_text()) if path.is_file() else {}
+    """apps.local.json (written by `insights up`) shadows apps.json (written by CI)."""
+    for name in ("apps.local.json", "apps.json"):
+        path = REGISTRY / name
+        if path.is_file():
+            body = json.loads(path.read_text())
+            return {k: v for k, v in body.items() if not k.startswith("_")}
+    return {}
 
 
 @app.get("/")

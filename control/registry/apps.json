@@ -1,20 +1,21 @@
 {
-  "comp-report": {
-    "team": "people-analytics",
-    "kind": "job",
-    "sdk": "0.1.0",
-    "path": "/Users/murarik1/learning/insights-hub/insights-comp-report",
-    "schedule": "0 6 * * MON",
-    "restricted": true,
-    "port": null
-  },
+  "_comment": "The deployment registry. CI appends to this when an app deploys; it is version-controlled because 'what is deployed' is a fact worth reviewing. `insights up` writes apps.local.json instead, so running the local stack never dirties this file.",
   "headcount-dashboard": {
     "team": "people-ops",
     "kind": "web",
     "sdk": "0.1.0",
-    "path": "/Users/murarik1/learning/insights-hub/insights-headcount-dashboard",
+    "path": "../insights-headcount-dashboard",
     "schedule": null,
     "restricted": false,
-    "port": 9121
+    "port": null
+  },
+  "comp-report": {
+    "team": "people-analytics",
+    "kind": "job",
+    "sdk": "0.1.0",
+    "path": "../insights-comp-report",
+    "schedule": "0 6 * * MON",
+    "restricted": true,
+    "port": null
   }
 }
