@@ -1,0 +1,90 @@
+# The access registry. Platform-owned; tenants CANNOT edit this file.
+#
+# Two levels, and the distinction is the whole model:
+#
+#   connections   the shared data connections the platform operates. ONE warehouse,
+#                 ONE internal REST API. Every tenant uses the same ones. This is the
+#                 "shared data connection" in the literal sense - and it is exactly why
+#                 the platform does not hand it out: sharing a connection would mean
+#                 sharing a credential.
+#
+#   datasets      the unit of ENTITLEMENT. A named thing inside a connection, with an
+#                 owner and a classification. An app declares datasets, never connections.
+#
+# This is not a data catalog. There is no search, no schema browser, no lineage and no
+# sample data - see ADR-002 section 5 and ADR-005 omission 9. It holds the minimum the
+# broker needs in order to enforce, and nothing a team who cannot read the data should see.
+
+# ---------------------------------------------------------------------------
+# Shared connections - operated by the platform, never exposed to tenant code.
+# ---------------------------------------------------------------------------
+connections:
+
+  warehouse-main:
+    engine: warehouse                 # -> insights_sdk.data.query(dataset, sql, **params)
+    description: The analytics warehouse.
+    environments:
+      local: {dsn_env: INSIGHTS_WAREHOUSE_DSN}    # stub: a SQLite file seeded by runtime/fakes
+      prod:  {dsn_env: INSIGHTS_WAREHOUSE_DSN}    # real: injected from the platform secret store
+
+  directory-api:
+    engine: rest                      # -> insights_sdk.data.fetch(dataset, resource, **params)
+    description: The internal employee directory service.
+    environments:
+      local: {base_url_env: INSIGHTS_DIRECTORY_URL, token_env: INSIGHTS_DIRECTORY_TOKEN}
+      prod:  {base_url_env: INSIGHTS_DIRECTORY_URL, token_env: INSIGHTS_DIRECTORY_TOKEN}
+
+# ---------------------------------------------------------------------------
+# Datasets - what an app may actually be entitled to.
+# classification: internal | confidential | restricted
+# `restricted` triggers the restricted tier: dataset-owner grant, emit-time field
+# assertions, and no standing operator access. See ADR-002.
+# ---------------------------------------------------------------------------
+datasets:
+
+  hr.headcount:
+    description: Headcount by department and month. Aggregate, no individuals.
+    connection: warehouse-main
+    classification: internal
+    owner: MG-PEOPLE-OPS
+    locations:
+      local: {table: hr_headcount}
+      prod:  {table: hr.headcount_v2}   # physical name differs per env; the alias does not.
+                                        # This is what makes tenant SQL portable.
+
+  hr.compensation:
+    description: Individual compensation records.
+    connection: warehouse-main
+    classification: restricted
+    owner: MG-PEOPLE-ANALYTICS
+    locations:
+      local: {table: hr_compensation}
+      prod:  {table: hr.compensation}
+    # Fields the broker masks unless the caller holds the named role. Enforced in
+    # step 8 of the broker, after the read and before the rows reach tenant code.
+    masking:
+      employee_name: comp-analyst
+      base_salary:   comp-analyst
+    # Field names asserted absent from every telemetry record emitted by an app
+    # holding this dataset (ADR-003). The list lives here, not in tenant code.
+    sensitive_fields: [employee_id, employee_name, base_salary, bonus_pct]
+
+  directory.people:
+    description: Employee name and department lookup.
+    connection: directory-api
+    classification: internal
+    owner: MG-PEOPLE-OPS
+    locations:
+      local: {resource: /people}
+      prod:  {resource: /v1/people}
+
+  sales.pipeline:
+    description: Open opportunities by region.
+    connection: warehouse-main
+    classification: internal
+    owner: MG-SALES-OPS
+    locations:
+      local: {table: sales_pipeline}
+      prod:  {table: sales.pipeline}
+    # Deliberately declared by NO app. Present so the test suite can prove that
+    # knowing a dataset name is not access - entitlement is enforced, not assumed.

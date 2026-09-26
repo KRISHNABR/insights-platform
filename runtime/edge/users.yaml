@@ -1,0 +1,28 @@
+# The stub corporate directory. The brief says "assume corporate SSO exists - stub it",
+# so this is the whole IdP: a list of people and the groups they are in.
+#
+# Real SSO changes how the edge LEARNS these facts. It does not change anything
+# downstream, because everything downstream consumes the edge's assertion, not the IdP.
+#
+# Four users, each earning their place in a test or a demo:
+users:
+  dana@corp.example:
+    name: Dana Okafor
+    groups: [MG-PEOPLE-OPS, headcount-viewer]
+
+  sam@corp.example:
+    name: Sam Whitfield
+    # Owns the restricted dataset and holds the role that unmasks it.
+    groups: [MG-PEOPLE-ANALYTICS, comp-analyst]
+
+  raj@corp.example:
+    name: Raj Mehta
+    # Deliberately NOT a comp-analyst. Reaches the restricted dataset, sees it masked.
+    # He is the proof that entitlement and field-level access are different questions.
+    groups: [MG-PEOPLE-ANALYTICS]
+
+  priya@corp.example:
+    name: Priya Nair
+    # Platform team. Note what she does NOT have: membership of any tenant's groups,
+    # and no standing access to any dataset (ADR-003).
+    groups: [MG-PLATFORM]

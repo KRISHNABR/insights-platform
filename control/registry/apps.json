@@ -1,0 +1,20 @@
+{
+  "comp-report": {
+    "team": "people-analytics",
+    "kind": "job",
+    "sdk": "0.1.0",
+    "path": "/Users/murarik1/learning/insights-hub/insights-comp-report",
+    "schedule": "0 6 * * MON",
+    "restricted": true,
+    "port": null
+  },
+  "headcount-dashboard": {
+    "team": "people-ops",
+    "kind": "web",
+    "sdk": "0.1.0",
+    "path": "/Users/murarik1/learning/insights-hub/insights-headcount-dashboard",
+    "schedule": null,
+    "restricted": false,
+    "port": 9121
+  }
+}

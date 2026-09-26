@@ -1,0 +1,48 @@
+# Grants - the SECOND key for restricted data. Platform-owned; tenants cannot edit.
+#
+# For a restricted dataset, two independent things must be true before a read succeeds:
+#
+#   1. the TENANT declared the dataset in their own app.yaml          (intent)
+#   2. the DATASET OWNER granted it here                              (approval)
+#
+# Neither alone is sufficient. Declaring a restricted dataset you have not been
+# granted fails in CI, and fails again at runtime if CI is bypassed. See ADR-002 s4.
+#
+# Standard-tier datasets need no entry here: declaring them in app.yaml is enough.
+# That asymmetry is the point - friction is proportional to sensitivity.
+#
+# Written by `insights access approve`, which appends and never edits in place, so
+# this file is also the evidence trail. Revocation is a new entry with revoked_at set.
+
+grants:
+
+  - dataset: hr.compensation
+    app: comp-report
+    access: read
+    # Roles this APP operates under when it reads this dataset. Written here by the
+    # dataset owner - deliberately NOT read from the tenant's app.yaml, or a team could
+    # unmask compensation fields by editing a line in their own repository.
+    roles: [comp-analyst]
+    granted_to: MG-PEOPLE-ANALYTICS
+    granted_by: sam@corp.example          # a member of the dataset owner group
+    granted_at: "2026-09-20T09:14:00Z"
+    expires_at: null                      # null = standing; break-glass grants always expire
+    reason: "Weekly compensation equity report. Reviewed by Compliance ref CR-2026-0912."
+
+# --------------------------------------------------------------------------------
+# Break-glass grants - operator access to tenant data. Time-boxed, second-approver,
+# audited, and the tenant is notified. See ADR-003.
+#
+# This example is a REAL past grant, kept so `insights compliance-report` has
+# something to show a reviewer. It has expired; the broker will not honour it.
+# --------------------------------------------------------------------------------
+break_glass:
+
+  - dataset: hr.compensation
+    operator: priya@corp.example          # platform team
+    approved_by: sam@corp.example         # dataset owner group, and NOT the operator
+    requested_at: "2026-09-24T11:02:00Z"
+    expires_at:   "2026-09-24T12:02:00Z"  # 60 minutes
+    reason: "comp-report job failing on a malformed row; needed to see the row shape."
+    tenant_notified: true
+    used: 1
