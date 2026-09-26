@@ -26,10 +26,12 @@ from packaging.version import Version
 
 try:  # in CI the SDK is pip-installed, which is the path that matters
     from insights_sdk import SUPPORTED_VERSIONS, config
+    from insights_sdk.cli.scaffold import BASE_VERSIONS
     from insights_sdk.errors import InsightsError
 except ModuleNotFoundError:  # locally the four repos just sit side by side
     sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "insights-sdk" / "src"))
     from insights_sdk import SUPPORTED_VERSIONS, config
+    from insights_sdk.cli.scaffold import BASE_VERSIONS
     from insights_sdk.errors import InsightsError
 
 SECRET_PATTERNS = [
@@ -133,19 +135,72 @@ def main() -> int:
                 fail(f"possible secret in {path}")
                 break
 
-    # 5. a tenant repo must NOT contain a Dockerfile
+    # 5. the tenant's Dockerfile, checked rather than owned
     #
-    # Inverted from an earlier version, which checked the CONTENTS of a tenant
-    # Dockerfile. There is no such file: the platform renders the image from
-    # runtime.base at build time, which is what makes "runs as non-root", "built on
-    # a supported base" and "SDK matches the manifest" true rather than checked.
-    # A Dockerfile appearing here means someone is trying to take that back.
-    if Path("Dockerfile").is_file():
+    # This is the deliberate trade in ADR-004. An earlier design refused a tenant
+    # Dockerfile outright and rendered the image from runtime.base, which made "runs
+    # as non-root" and "built on a supported base" TRUE rather than CHECKED. Teams
+    # own the file now, so those properties become checks - and a check is weaker
+    # than a construction, because a check has to be right and has to run.
+    #
+    # The one we cannot check away is staleness: a CVE fix in a base image reaches an
+    # app only when that app bumps its own FROM. So rule (d) is the important one,
+    # and it is the price of the control teams asked for.
+    dockerfile = Path("Dockerfile")
+    if not dockerfile.is_file():
         fail(
-            "this repo contains a Dockerfile. The platform renders the image from "
-            "runtime.base in app.yaml - run `insights build --show` to see it. A "
-            "hand-written Dockerfile would make the platform's guarantees unenforceable."
+            "no Dockerfile. `insights new-app` generates one and it belongs to your "
+            "repo - run `insights build --show` to see what it should look like."
         )
+    else:
+        lines = [ln.strip() for ln in dockerfile.read_text().splitlines()]
+        froms = [ln for ln in lines if ln.upper().startswith("FROM ")]
+        users = [ln for ln in lines if ln.upper().startswith("USER ")]
+
+        if not froms:
+            fail("Dockerfile has no FROM")
+        else:
+            # (a) every stage must build on a base the platform publishes. A stage
+            #     FROM docker.io is a base nobody here is patching.
+            for line in froms:
+                image = line.split()[1]
+                if not image.startswith("insights-hub/"):
+                    fail(
+                        f"Dockerfile builds on {image!r}. Every stage must start from a "
+                        f"published insights-hub base - those are the ones we patch. "
+                        f"Run `insights runtimes` for the list."
+                    )
+                # (b) an image you cannot name is one you cannot roll back to.
+                elif image.endswith(":latest") or ":" not in image:
+                    fail(f"Dockerfile uses {image!r}. Pin a base version; :latest is not rollback-able.")
+
+            # (c) the FINAL stage must not end up as root. Note the base images already
+            #     set `USER insights`, so a tenant file with no USER line is correct -
+            #     the check is "if you switched to root, switch back", not "declare it".
+            if users and users[-1].split()[1] in ("root", "0"):
+                fail(
+                    "Dockerfile's last USER is root. Install as root if you must, but "
+                    "switch back - a container breakout should land on a user that owns nothing."
+                )
+
+            # (d) the base version must match what the manifest declared AND still be
+            #     the current published one.
+            declared = f"insights-hub/{manifest.base}:"
+            final_from = froms[-1].split()[1]
+            if not final_from.startswith(declared):
+                fail(
+                    f"Dockerfile's final stage is {final_from!r} but app.yaml declares "
+                    f"runtime.base: {manifest.base}. The manifest and the image must agree."
+                )
+            else:
+                pinned = final_from.split(":", 1)[1]
+                current = BASE_VERSIONS.get(manifest.base)
+                if current and pinned != current:
+                    fail(
+                        f"Dockerfile pins {manifest.base}:{pinned}, but {current} is current. "
+                        f"Base images carry the OS and interpreter patches - because this file "
+                        f"is yours, that fix reaches you only when you bump this line."
+                    )
 
     failures = globals()["FAILURES"]
     print(f"platform gates: {'PASS' if not failures else f'{failures} failure(s)'}")

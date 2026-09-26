@@ -23,12 +23,14 @@ import sys
 import time
 import uuid
 from datetime import datetime, timezone
-
-# This module is run as a script (`python runtime/scheduler/main.py`), so its own
-# directory is sys.path[0] and a flat import is the honest one. Spelled out because
-# a bare `from state import` otherwise looks like it depends on the caller's cwd.
-from state import RunState
 from pathlib import Path
+
+# Import the sibling module without assuming how we were started. Run as a script
+# its directory IS sys.path[0] and a flat import works - but the SDK's tests import
+# this module to exercise `due()`, and then it is not, so a flat import raised
+# ModuleNotFoundError and took three passing tests with it. Belt and braces, once.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from state import RunState                                            # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 PLATFORM = HERE.parent.parent

@@ -79,7 +79,9 @@ insights-forecast-dashboard/
 └── README.md
 ```
 
-**There is no Dockerfile**, and that is deliberate — you declare a runtime, you don't build an
+**The Dockerfile is yours** — generated once by `insights new-app`, then your file to edit. CI
+checks four things about it (published base, pinned version, non-root, base not stale); it does
+not check the rest. You declare a runtime
 image. The four workflow files are four lines each and call one platform pipeline. All of it is
 **generated rather than copied from a template**, so when we improve it you get the improvement
 by upgrading the SDK; you don't inherit a snapshot of what we thought was good eighteen months

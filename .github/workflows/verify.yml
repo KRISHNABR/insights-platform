@@ -90,6 +90,28 @@ jobs:
 
       # ---- 3 · a tenant cannot self-declare sensitivity ----------------------
       #        This must FAIL, so failing is the pass condition.
+      - name: A tenant Dockerfile that breaks the rules is refused
+        working-directory: insights-hub
+        run: |
+          # ADR-004 handed the image to tenants, which turned three constructed
+          # properties into checks. A check that cannot fail is worse than no check,
+          # so prove each one fails.
+          cp insights-comp-report/Dockerfile "$RUNNER_TEMP/Dockerfile.orig"
+          fails () {   # label, sed script
+            sed -i "$2" insights-comp-report/Dockerfile
+            if (cd insights-comp-report && INSIGHTS_REGISTRY_DIR=../insights-platform/control/registry \
+                  python ../insights-platform/control/cli/gates.py --app comp-report --manifest app.yaml); then
+              echo "::error::the gate ACCEPTED $1"; exit 1
+            fi
+            echo "refused: $1"
+            cp "$RUNNER_TEMP/Dockerfile.orig" insights-comp-report/Dockerfile
+          }
+          fails "a base from Docker Hub"  's|^FROM insights-hub/python-data:0.1|FROM python:3.12-slim|'
+          fails "an unpinned :latest base" 's|^FROM insights-hub/python-data:0.1|FROM insights-hub/python-data:latest|'
+          fails "a stale base version"     's|^FROM insights-hub/python-data:0.1|FROM insights-hub/python-data:0.0|'
+          fails "a final USER of root"     '$a\USER root'
+          cp "$RUNNER_TEMP/Dockerfile.orig" insights-comp-report/Dockerfile
+
       - name: A manifest declaring its own classification is rejected
         working-directory: insights-hub/insights-headcount-dashboard
         run: |

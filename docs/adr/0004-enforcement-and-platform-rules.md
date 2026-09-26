@@ -31,7 +31,7 @@ That observation produced the rule below.
 
 | Layer | What lives here | Why there |
 |---|---|---|
-| **Generator / template** | repo layout, the four CI callers, `pyproject.toml`, `.gitignore` | If it is generated, it cannot be got wrong. Cheapest possible enforcement. Note there is no Dockerfile to generate — a tenant declares `runtime.base` and the platform builds the image, which is cheaper still |
+| **Generator / template** | repo layout, the four CI callers, `pyproject.toml`, `.gitignore`, **the Dockerfile** | If it is generated, it starts right. The Dockerfile is the one generated file the tenant then *owns* — see "The image is the tenant's" below, including what that costs |
 | **SDK (runtime)** | credential handling, per-user data scoping, telemetry redaction, identity trust, dataset entitlement | Must hold even if CI is bypassed, and the failure mode is an accident rather than a policy breach |
 | **CI (central reusable workflow)** | manifest schema, dataset entitlement vs catalog, SDK version floor, no secrets, no `:latest`, tests pass | Must never *ship*. The platform owns the pipeline even though it does not own the code |
 | **Human review** | only manifest changes that cross a boundary: a new dataset, a new role, a change to `access.manage` | The judgement calls — and there are few enough that three people can actually do them. Sensitivity is **not** on this list: it is a Unity Catalog tag the data owner sets, not something we review |
@@ -46,6 +46,49 @@ tenant code — *you own your code, we own the road it travels on.*
 **Most rules end up in the generator or the SDK, and that is the goal.** Every rule that has to
 live in CI is one a tenant can trip over during development; every rule in documentation is one
 they will trip over in production.
+
+### The image is the tenant's — and what that costs
+
+**This reverses the original decision, deliberately.** The first design refused a tenant
+Dockerfile outright: `runtime.base` was declared in `app.yaml` and the platform rendered and
+built the image. That put three properties in the strongest possible layer — *built on a
+supported base*, *runs as non-root*, and *the SDK matches the manifest* were *constructed*, not
+checked. Nothing in a tenant repo could take them back because there was no file to edit.
+
+Teams asked for the image, and the argument for giving it to them is real: a platform that owns
+the image owns every `apt-get` line anyone will ever need, and "file a ticket and wait" is not
+an answer to a team with a deadline and an unusual native dependency. `uv` already owns the
+Python dependency layer, so what is left in the base is thin — an OS, an interpreter, a user id
+and an entrypoint.
+
+So: **`insights new-app` generates a Dockerfile, and from that moment it belongs to the repo.**
+`insights upgrade-scaffold` does not touch it, because re-rendering it would silently discard
+the edits that were the whole point.
+
+Four properties move from *constructed* to *checked*, in CI and in `insights doctor`:
+
+| Rule | Why |
+|---|---|
+| Every `FROM` is a published `insights-hub/*` base | Those are the images we patch. A stage `FROM docker.io` is one nobody here is patching |
+| No `:latest`, every base pinned | An image you cannot name is one you cannot roll back to |
+| The final `USER` is not root | The base already sets `USER insights`, so a file with no `USER` line is correct. Install as root if you must; switch back |
+| The pinned base version is current | See below |
+
+**Be honest about the last one, because it is the price.** A check is weaker than a
+construction: it has to be right, and it has to run. Three of the four above are genuinely
+enforceable — a repo cannot ship past them. The fourth cannot be enforced *away*: when a CVE
+lands in `python:3.12-slim`, the platform rebuilds the base, and that fix reaches an app **only
+when that app bumps its own `FROM` line.** We can fail their pipeline; we cannot patch their
+image. With platform-rendered images that was one central rebuild and zero tenant action.
+
+We accept that, and we pay for it with noise rather than silence: `insights doctor` reports a
+stale base locally, the deploy gate fails on it, and `insights status` will show fleet-wide base
+drift. The failure mode we are guarding against is not a team refusing to upgrade — it is a team
+**not knowing** they are behind.
+
+> **Revisit if** base drift stops being a number someone looks at. The moment "how many apps are
+> on a base older than N?" has no owner, this reversal has quietly cost us the thing it traded
+> away, and platform-rendered images come back.
 
 ## The tension
 

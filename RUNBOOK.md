@@ -193,7 +193,9 @@ is a test that asserts every rendered file is listed.
 ```
 
 A CVE in a base image is one rebuild plus a redeploy of affected apps — that property is most of
-the argument for a paved road, and it only holds because no tenant has a Dockerfile of their own.
+the argument for a paved road. Since ADR-004 tenants own their Dockerfile, so a base change is
+not a silent rebuild any more: bump BASE_VERSIONS, and every app's `doctor` and deploy gate
+starts reporting the stale pin until they bump their FROM. Announce it; do not assume they look.
 
 ### Adding a base image family member
 

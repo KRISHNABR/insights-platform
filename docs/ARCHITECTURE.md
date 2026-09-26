@@ -203,7 +203,8 @@ def headcount(month: str = "2026-09"):
 ```
 
 Note what is *not* in that file: no login code, no connection, no credential, no table name,
-no Dockerfile, no logging setup.
+no logging setup. (There *is* a Dockerfile in the repo — generated once, theirs to edit. See
+[ADR-004](adr/0004-enforcement-and-platform-rules.md) for what that trade cost.)
 
 ### Archetype B — a scheduled job (`kind: job`)
 
