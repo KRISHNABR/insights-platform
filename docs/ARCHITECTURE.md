@@ -562,6 +562,75 @@ That mismatch is detectable, and it is the alarm worth writing first.
 a number on a dashboard. The trigger is the first tenant whose app is in a business-critical
 path (ADR-005).
 
+## 7b · How an unattended job gets a credential
+
+The question a compliance reviewer asks second, after "who can read compensation": *a job runs
+at 06:00 with nobody logged in — where does its credential come from, and who else can read it?*
+
+**The principle: the job holds an identity, not a credential.** It exchanges that identity for a
+token at the moment of the query. The token expires in about an hour and nothing is persisted.
+
+```mermaid
+flowchart TB
+  S["EventBridge Scheduler<br/>06:00 Monday"] --> T["the task starts<br/><i>with a workload identity, not a password</i>"]
+  T --> Q["query('hr.compensation', ...)"]
+  Q --> C1{"declared in app.yaml?"}
+  C1 -->|no| X(["EntitlementError"])
+  C1 -->|yes| C2{"granted to this service principal in UC?"}
+  C2 -->|no| X
+  C2 -->|yes| TOK["obtain a short-lived Databricks token<br/><i>mechanism depends on the runtime - see below</i>"]
+  TOK --> UC["Unity Catalog sees svc:comp-report<br/>applies ITS grants and column masks"]
+  UC --> A["audit: app · dataset · rows · run_id"]
+  A --> D(["token discarded"])
+```
+
+### The three mechanisms, and why the runtime decides
+
+Databricks workload identity federation consumes an **OIDC** token. Whether the workload has one
+is a property of where it runs, and this is the detail that is easy to get wrong:
+
+| Runtime | Has an OIDC identity? | How the job gets a token | Secret exists? |
+|---|---|---|---|
+| **Kubernetes** (IRSA / Pod Identity) | **Yes** — the projected ServiceAccount token | Exchange it directly with Databricks | **No** |
+| **GitHub Actions** | **Yes** — `ACTIONS_ID_TOKEN_REQUEST_URL` | Same as above | **No** |
+| **ECS Fargate** | **No** — a task role is IAM/SigV4 | (a) read a per-app client secret from Secrets Manager, scoped to that task role, or (b) call a platform **token broker** with SigV4 and let it federate | (a) one per app · (b) one, held once |
+
+> **Say this plainly rather than claiming more than is true.** "No stored credential exists" is
+> fully true on Kubernetes and only mostly true on ECS. On Fargate there is either one secret per
+> app — readable by exactly one task role, and by nobody else without an auditable IAM change —
+> or one broker that mints scoped tokens and logs every mint. Both are defensible. Neither is
+> "nothing to read".
+>
+> This is a genuine argument for Kubernetes and it is recorded as one in
+> [ADR-005 §12](adr/0005-deliberate-omissions-and-triggers.md).
+
+### What keeps it safe regardless of mechanism
+
+| Property | How it is achieved | What breaks without it |
+|---|---|---|
+| **One identity per app** | A Databricks service principal per app, never per team | Blast radius becomes the union of every dataset any app on the team can read |
+| **Two keys, still** | The app declares the dataset; the **data owner** grants it to that SP in Unity Catalog | The platform team could grant itself data access |
+| **Short-lived** | ~1h tokens. The federation trust itself never expires, so there is no rotation task to forget | A leaked long-lived token is valid until someone notices |
+| **Attributable** | UC's audit records the SP; our correlation record ties it to the `run_id` | "Something read compensation at 06:00" instead of "this job, this run" |
+| **Never impersonates a person** | A job acts as itself | An unattended run attributed to a human is a lie in the audit trail |
+
+### What must never happen
+
+A Databricks **personal access token** in a GitHub secret. One **shared** service principal
+across apps. A credential in a tenant's repo, or in an environment variable a team sets
+themselves. Each destroys a different row of the table above — and each is the path of least
+resistance, which is exactly why the platform removes the choice rather than documenting against
+it (ADR-004).
+
+### What exists in this submission
+
+`adapters.DatabricksEngine._service_token()` is the seam, and it raises `NotImplementedError`
+with a pointer to this section. Locally there is no token at all: the stub warehouse is a SQLite
+file and the path is in the environment. That is the honest local gap, and
+[COMPLIANCE.md](../COMPLIANCE.md) says so in the same words.
+
+---
+
 ## 8 · Deploying — dev, uat, prod
 
 ```mermaid

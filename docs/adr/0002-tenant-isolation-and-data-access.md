@@ -106,15 +106,26 @@ design below, and it is what a compliance partner is being asked to review.
 | | Interactive app | Scheduled job |
 |---|---|---|
 | Who does UC see? | **the actual person** | the app's service principal |
-| How the token is obtained | OAuth token exchange from their session — Databricks federates to the same Entra | **Workload identity federation** from the ECS task role (OIDC) |
-| Secret stored anywhere? | **No** | **No** — federation, not a client secret |
-| What a platform engineer can read | **nothing — there is nothing to read** | **nothing** |
+| How the token is obtained | OAuth token exchange from their session — Databricks federates to the same Entra | **Depends on the runtime** — see below |
+| Secret stored anywhere? | **No** | **On Kubernetes, no. On ECS Fargate, one per app** |
+| What a platform engineer can read | **nothing — there is nothing to read** | nothing they are not already authorised for |
 | Who enforces column and row access | Unity Catalog, per person | Unity Catalog, per principal |
 
 Per-user tokens are the part that matters. Unity Catalog applies *Krishna's* masks to Krishna's
 query, so the platform cannot see compensation by impersonating an app — the app holds no
 standing credential to impersonate. A platform engineer who genuinely needs tenant rows must
 obtain a **UC grant from the data owner**, recorded in UC's audit, which we cannot edit.
+
+**The job path is where this claim needs qualifying**, and it is worth being exact because it
+is the first thing a reviewer will test. Databricks workload identity federation consumes an
+**OIDC** token. On Kubernetes the projected ServiceAccount token is one, so a job federates
+directly and no secret exists. On **ECS Fargate the task role is IAM, not OIDC**, so a job
+needs either a per-app client secret in Secrets Manager — readable only by its own task role —
+or a platform token broker it calls with SigV4. Either is defensible; neither is "no secret
+exists".
+
+That difference is a real argument for Kubernetes that ADR-005 §12 does not currently give
+enough weight to, and it is stated there.
 
 The residual, stated plainly: AWS Secrets Manager still holds genuinely external secrets, such
 as a third-party API key. Those carry a resource policy granting only the app's task role, and

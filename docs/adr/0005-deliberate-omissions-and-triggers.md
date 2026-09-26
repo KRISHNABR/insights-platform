@@ -160,13 +160,21 @@ ResourceQuota.
 The honest version of this decision: for two or three engineers who also run support, a
 Kubernetes upgrade path is a second job. Fargate has no servers to patch.
 
-> **Trigger, and it has two halves.** Technically: needing workload-level policy-as-data, a
-> service mesh, or per-tenant network policy. Organisationally — and this is the one more
-> likely to fire — **if the company already operates EKS as a shared service**, the control
-> plane is already someone else's job, the cost argument mostly evaporates, and namespaces plus
-> NetworkPolicy plus ResourceQuota give real per-tenant isolation primitives we currently
-> hand-roll with IAM and security groups. That would be a reason to reopen this, not a reason
-> to have started here.
+> **Trigger, and it has three halves now.** Technically: needing workload-level policy-as-data,
+> a service mesh, or per-tenant network policy. Organisationally: **if the company already
+> operates EKS as a shared service**, the control plane is already someone else's job and the
+> cost argument mostly evaporates.
+>
+> And a third, which emerged from writing ADR-002 §3 and which I had under-weighted: **the
+> machine-to-machine credential story is strictly better on Kubernetes.** A projected
+> ServiceAccount token is an OIDC token, so a scheduled job federates directly to Databricks
+> and no secret exists anywhere. An ECS task role is IAM, not OIDC, so the same job needs a
+> per-app client secret or a token broker. "No stored credential" is fully true on Kubernetes
+> and only mostly true on Fargate — and for a platform whose most sensitive tenant is reviewed
+> by a compliance partner, that gap is worth more than the operational saving.
+>
+> At the scale in the brief — 25 internal apps — Fargate still wins on operating cost for three
+> engineers. At a few hundred apps, or with a shared EKS already running, it does not.
 
 ### 13. No real infrastructure as code
 
