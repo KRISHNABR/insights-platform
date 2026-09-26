@@ -109,7 +109,7 @@ No failover, no formal availability target, no on-call rotation defined.
 
 ### 9. No data discovery in the app platform
 
-No dataset search, no schema browser, no lineage, no sample rows. `insights datasets` tells a
+No dataset search, no schema browser, no lineage, no sample rows. `insights connections` tells a
 team what it already has, plus the name and owner of what it could request.
 
 The reasoning changed once governance moved to Unity Catalog, and it got stronger. Discovery is
@@ -119,7 +119,7 @@ platform would mean **storing a description of compensation data's shape for tea
 read it**, in a system with weaker controls than the one that already does this properly.
 
 > **Trigger:** none that leads back to us. If discovery is inadequate, the fix belongs in Unity
-> Catalog. The only thing that would change here is `insights datasets` linking out to the UC
+> Catalog. The only thing that would change here is `insights connections` linking out to the UC
 > entry for a dataset a team is already entitled to — a convenience, not a catalog.
 
 ### 10. No HTTP data service — the broker is an in-process library

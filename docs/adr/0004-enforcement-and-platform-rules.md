@@ -31,7 +31,7 @@ That observation produced the rule below.
 
 | Layer | What lives here | Why there |
 |---|---|---|
-| **Generator / template** | repo layout, the four CI callers, `pyproject.toml`, `.gitignore`, **the Dockerfile** | If it is generated, it starts right. The Dockerfile is the one generated file the tenant then *owns* — see "The image is the tenant's" below, including what that costs |
+| **Generator / template** | repo layout, the four CI callers, `pyproject.toml`, `.gitignore`, `RUNBOOK.md`, **the Dockerfile** | If it is generated, it starts right. The Dockerfile is the one generated file the tenant then *owns* outright — see below, including what that costs |
 | **SDK (runtime)** | credential handling, per-user data scoping, telemetry redaction, identity trust, dataset entitlement | Must hold even if CI is bypassed, and the failure mode is an accident rather than a policy breach |
 | **CI (central reusable workflow)** | manifest schema, dataset entitlement vs catalog, SDK version floor, no secrets, no `:latest`, tests pass | Must never *ship*. The platform owns the pipeline even though it does not own the code |
 | **Human review** | only manifest changes that cross a boundary: a new dataset, a new role, a change to `access.manage` | The judgement calls — and there are few enough that three people can actually do them. Sensitivity is **not** on this list: it is a Unity Catalog tag the data owner sets, not something we review |
@@ -47,48 +47,52 @@ tenant code — *you own your code, we own the road it travels on.*
 live in CI is one a tenant can trip over during development; every rule in documentation is one
 they will trip over in production.
 
-### The image is the tenant's — and what that costs
+### The image is the tenant's, and we publish no base
 
-**This reverses the original decision, deliberately.** The first design refused a tenant
-Dockerfile outright: `runtime.base` was declared in `app.yaml` and the platform rendered and
-built the image. That put three properties in the strongest possible layer — *built on a
-supported base*, *runs as non-root*, and *the SDK matches the manifest* were *constructed*, not
-checked. Nothing in a tenant repo could take them back because there was no file to edit.
+**This reverses the original decision twice, and the second reversal fixed the first.**
 
-Teams asked for the image, and the argument for giving it to them is real: a platform that owns
-the image owns every `apt-get` line anyone will ever need, and "file a ticket and wait" is not
-an answer to a team with a deadline and an unusual native dependency. `uv` already owns the
-Python dependency layer, so what is left in the base is thin — an OS, an interpreter, a user id
-and an entrypoint.
+The first design refused a tenant Dockerfile entirely: the platform rendered the image
+from a declared `runtime.base`. Three properties were then *constructed* rather than
+checked — built on a supported base, runs as non-root, SDK matches the manifest — and
+nothing in a tenant repo could take them back, because there was no file to edit.
 
-So: **`insights new-app` generates a Dockerfile, and from that moment it belongs to the repo.**
-`insights upgrade-scaffold` does not touch it, because re-rendering it would silently discard
-the edits that were the whole point.
+Teams asked for the image, and the argument was good: a platform that owns the image
+owns every `apt-get` line anyone will ever need, and "file a ticket and wait" is not an
+answer to a team with a deadline and an unusual native dependency. So `insights new-app`
+began generating a Dockerfile the team owns.
 
-Four properties move from *constructed* to *checked*, in CI and in `insights doctor`:
+That left us in the worst position of the three. We had handed over the file but kept
+publishing base images — so the platform still implicitly promised to patch something,
+and *could not deliver*, because a fix in a base image reaches an app only when that
+app bumps its own `FROM`. A promise we could not keep is worse than no promise.
+
+**So we publish nothing.** A generated Dockerfile is `FROM python:3.12-slim` with uv
+copied from its official image. There is no platform base image to be behind.
+
+CI checks exactly two things:
 
 | Rule | Why |
 |---|---|
-| Every `FROM` is a published `insights-hub/*` base | Those are the images we patch. A stage `FROM docker.io` is one nobody here is patching |
-| No `:latest`, every base pinned | An image you cannot name is one you cannot roll back to |
-| The final `USER` is not root | The base already sets `USER insights`, so a file with no `USER` line is correct. Install as root if you must; switch back |
-| The pinned base version is current | See below |
+| The base is pinned, not `:latest` | an image you cannot name is one you cannot roll back to, and `latest` means the build is not reproducible |
+| The final `USER` is not root | a container breakout should land on a user that owns nothing, and nothing at runtime undoes it |
 
-**Be honest about the last one, because it is the price.** A check is weaker than a
-construction: it has to be right, and it has to run. Three of the four above are genuinely
-enforceable — a repo cannot ship past them. The fourth cannot be enforced *away*: when a CVE
-lands in `python:3.12-slim`, the platform rebuilds the base, and that fix reaches an app **only
-when that app bumps its own `FROM` line.** We can fail their pipeline; we cannot patch their
-image. With platform-rendered images that was one central rebuild and zero tenant action.
+Everything else in that file is a suggestion. Add build stages, system packages, a
+different distro — CI will not stop you.
 
-We accept that, and we pay for it with noise rather than silence: `insights doctor` reports a
-stale base locally, the deploy gate fails on it, and `insights status` will show fleet-wide base
-drift. The failure mode we are guarding against is not a team refusing to upgrade — it is a team
-**not knowing** they are behind.
+**What this costs, stated plainly.** Nobody patches tenant base images. A CVE in
+`python:3.12-slim` reaches an app when that team rebuilds, and we can tell them but not
+do it for them. With platform-rendered images that was one central rebuild.
 
-> **Revisit if** base drift stops being a number someone looks at. The moment "how many apps are
-> on a base older than N?" has no owner, this reversal has quietly cost us the thing it traded
-> away, and platform-rendered images come back.
+We accept it because the alternative was *pretending* otherwise. Scanning is where this
+gets closed, not ownership: image scanning on every build, and a fleet view of base
+image age, are both on the list in
+[ADR-005](0005-deliberate-omissions-and-triggers.md).
+
+**It also answers the Python-version question properly.** "We need 3.10 and you support
+3.12" is one line: `FROM python:3.10-slim`. Nothing in the platform pins a tenant's
+interpreter. The remaining constraint is the SDK's own `requires-python`, which is a
+real conversation and not an image problem — see
+[ARCHITECTURE §10](../ARCHITECTURE.md#10--upgrades-how-a-platform-change-reaches-a-running-app).
 
 ## The tension
 

@@ -48,7 +48,7 @@ You cannot grant it, and there is no command that pretends otherwise. Route them
 
 ```bash
 # the requesting team runs this; it prints who to ask and what to ask for
-uv run insights access --reason "quarterly equity review"
+uv run insights connections --probe
 ```
 
 The owner grants it **in the data platform** — a Unity Catalog grant, a role, whatever that

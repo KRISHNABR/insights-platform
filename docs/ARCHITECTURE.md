@@ -1,859 +1,538 @@
 # Insights Hub — architecture
 
-*How the system is built and how it runs. Plain English, no decision history — the
-[ADRs](adr/) hold the arguments about why. If you want to know **what happens when someone
-opens an app, or when a job fires at 6am**, this is the page.*
+What this platform is, what it deliberately is not, and why each line was drawn where
+it is. Decisions live in [the ADRs](adr/); this page is the map.
 
 ---
 
-## 1 · What this is, in plain terms
+## 1 · The problem
 
-Teams across the company build small internal apps — a headcount dashboard, a weekly
-compensation report, a pipeline explorer. Today each team writes their own login, their own
-database connection, their own deployment and their own logging. Five teams have built the
-same five things five times, slightly differently, and nobody can answer *"who read the
-salary table last month?"*
+A three-person platform team supports a growing number of analytics apps across BMS.
+Each app is small — a dashboard, a scheduled report, an internal API — and each one
+otherwise re-invents the same six things: sign-in, authorization, a connection to a
+system the team already has access to, somewhere to keep the credential, logging, and
+a deployment pipeline.
 
-Insights Hub is the shared foundation underneath those apps. A team writes their app logic
-and one configuration file. They get login, permissions, data access, deployment across three
-environments, logging and monitoring — without writing any of it.
-
-**The one rule that shapes everything else:** the platform never hands a team a database
-password. A team says *"I need the headcount data"* and the platform fetches it for them.
-That single choice is what makes it possible to answer who read what, and to stop the
-headcount dashboard from reading salaries.
+Three people cannot operate three hundred snowflakes. They also cannot review three
+hundred teams' code. The platform therefore has to make the right thing the *default*
+rather than the *reviewed* thing.
 
 ---
 
-## 2 · Tech stack — and the two layers
-
-There are two different questions here, and the answer to each is different.
-
-> **What runs on your laptop** is deliberately tiny: Python, SQLite, two stdlib stub
-> services. One command, no Docker, no cloud account, no credentials.
->
-> **What this becomes in production** is a recommendation, in **two layers**:
-> **AWS for the application layer, Databricks for the data layer.** None of it is built
-> here — §10 is the target architecture, not a description of this repository.
-
-The point of the split is that the seam between them is one function per concern, so the
-recommendation is reachable rather than aspirational.
-
-### What actually runs locally
-
-| Concern | Local — what this repo runs | Why so small |
-|---|---|---|
-| Language | Python 3.12, **uv** | One toolchain, one lockfile |
-| Web | FastAPI + uvicorn | Already a dependency of the SDK |
-| Front door / login | the platform **edge** (FastAPI), `?as=krishna@corp.example` sets a cookie | A stubbed IdP is still a real trust boundary — see §6 |
-| Warehouse | **SQLite file**, seeded by a script | Zero setup. `hr.headcount` is a real table with real rows |
-| Internal REST API | ~40 lines of `http.server` | Proves a second connection type goes through the same broker |
-| Secrets | environment variables the CLI injects | Stands in for a credential the app never chooses |
-| Scheduling | the platform **scheduler**, cron matching in Python | Makes `kind: job` mean something |
-| Logs, metrics, audit | JSON lines to stdout → `runtime/sinks/` | Append-only files with the right shape |
-| Registry | two YAML files | Readable, reviewable, diffable |
-
-```bash
-uv run insights up          # that is the entire setup
-```
-
-**Everything above is a fake**, and deliberately so — the brief encourages it. What is *not*
-faked is the **flow**: sign-in, header stripping, identity injection, app-level role checks,
-dataset entitlement, the owner's grant, masking, audit, scheduling and the deploy gates all
-run for real, end to end, against the fakes.
-
-### What it becomes in production — the recommendation
-
-| | **Layer 1 — application platform** | **Layer 2 — data platform** |
-|---|---|---|
-| Runs on | **AWS** | **Databricks** |
-| Owns | containers, routing, login, schedules, deploys, logs and metrics | tables, ownership, sensitivity, grants, column masks, row filters, data audit |
-| Concretely | ALB (OIDC) · ECS Fargate · EventBridge Scheduler · ECR · CloudWatch · S3 | Unity Catalog · SQL Warehouse · Delta on S3 · UC system tables |
-| Insights Hub's job | **be the bridge**: turn one `app.yaml` into the right things in both | — |
-
-**Why two layers rather than one.** Governance belongs to the data platform, where it is
-enforced on every path to the data including a notebook — not only on ours. A platform team
-of three maintaining a second governance model beside Unity Catalog's is a second source of
-truth that drifts silently. So we own the application layer and delegate the data layer,
-which is both less code and a stronger guarantee. ADR-002 argues this properly.
-
-**What each local fake becomes:**
-
-| Local fake | Layer 1 · AWS | Layer 2 · Databricks |
-|---|---|---|
-| `?as=` + the edge | ALB OIDC action → Entra ID | — |
-| SQLite file | — | SQL Warehouse over Delta |
-| our masking rules | — | **UC column masks and row filters** |
-| our `owner:` field | — | **UC object owner** |
-| our audit file | Firehose → S3 Object Lock | **UC `system.access.audit`** |
-| env-var credentials | task role | **OAuth federation — no stored secret** |
-| the Python scheduler | EventBridge Scheduler → ECS RunTask | Databricks Jobs, for heavy transforms |
-| `uv run insights up` | ECS services behind an ALB | — |
-
-## 3 · The pieces
+## 2 · The shape: an SDK, not a service
 
 ```mermaid
 flowchart TB
-  U["employee<br/>in a browser"] --> FD["<b>Front door</b><br/>TLS · routing · corporate login<br/><i>Traefik locally · ALB on AWS</i>"]
-  FD --> EDGE["<b>Edge</b><br/>works out who you are,<br/>deletes anything you claimed about yourself,<br/>attaches the verified answer"]
-  EDGE --> WEB["<b>Your web app</b><br/>container"]
-  SCH["<b>Scheduler</b><br/>reads the cron from the registry<br/><i>container locally · EventBridge on AWS</i>"] --> JOB["<b>Your job</b><br/>container, runs to completion"]
-  WEB --> SDK["<b>SDK</b><br/>the only way to reach data<br/>query() · fetch()"]
-  JOB --> SDK
-  REG[("<b>Registry</b><br/>which datasets exist, who owns them,<br/>how sensitive, who is allowed")]
-  REG -.->|"looks up"| SDK
-  SDK --> SEC["<b>Secret store</b><br/>the passwords, which no app ever sees"]
-  SDK --> DATA[("<b>Shared connections</b><br/>warehouse · internal REST API")]
-  SDK --> OBS[("<b>Logs and audit</b><br/>what happened · who read what")]
+  subgraph T["A TENANT REPOSITORY — what a team owns"]
+    direction LR
+    T1["src/ — their code"]
+    T2["app.yaml — their declaration"]
+    T3["Dockerfile — their image"]
+    T4["pyproject.toml — their dependencies"]
+  end
+
+  subgraph P["THE PLATFORM — what they inherit"]
+    direction LR
+    P1["insights-sdk<br/><i>identity · connectors · secrets · telemetry</i>"]
+    P2["the edge<br/><i>sign-in, group check, header injection</i>"]
+    P3["the scheduler<br/><i>cron, retries, concurrency</i>"]
+    P4["reusable CI<br/><i>the gates</i>"]
+  end
+
+  T1 -->|imports| P1
+  T2 -->|read by| P1
+  T3 -->|checked by| P4
+  T4 -->|checked by| P4
 ```
 
-| Piece | What it does | Code |
+### "Why an SDK instead of a central service?"
+
+A central data service is the obvious alternative: one API in front of everything,
+every read passing through it. We rejected it, and the reason is operational rather
+than architectural.
+
+| | Central service | SDK (what we built) |
 |---|---|---|
-| **Front door** | TLS, routes by URL, sends you to corporate login if you have no session | config only |
-| **Edge** | The only component allowed to say who you are | `runtime/edge/` |
-| **SDK** | What a tenant imports: data, identity, logging, the app shapes | `insights-sdk` repo |
-| **Registry** | Datasets, owners, sensitivity, grants | `control/registry/` |
-| **Scheduler** | Runs jobs on their cron; applies timeout, retries, concurrency | `runtime/scheduler/` |
-| **Base images** | What apps are built on — the platform patches these | `runtime/base-image/` |
-| **Workflows** | One CI and one deploy pipeline every tenant calls in four lines | `.github/workflows/` |
+| Availability | every app is down when it is down | no shared runtime to fail |
+| Latency | an extra network hop on every read | a function call |
+| Scaling | the platform team capacity-plans for everybody's load | each app scales itself |
+| On-call | three people own an outage affecting three hundred apps | a team owns their own app |
+| Upgrades | one deploy changes behaviour for everyone at once | opt-in, per app, at their pace |
+| Debugging | "the platform is slow" | a stack trace in their own process |
+
+The deciding argument: **a three-person team cannot be on the critical path of three
+hundred apps at 3am.** A central service makes the platform team the single point of
+failure for every reader in the company, and no amount of redundancy makes three
+people a 24/7 rota.
+
+The cost is real: upgrades become opt-in, so they are slower. Section 10 is how we
+stop "opt-in" turning into "never".
+
+### "But doesn't an SDK make security harder to enforce?"
+
+It makes *some* things harder and some easier, and it is worth being precise about
+which.
+
+**What an SDK genuinely cannot do:** stop a determined tenant. The code runs in their
+process. They can `import sqlite3` and open their own connection, or add `psycopg2`
+and talk to their own database. No library prevents that.
+
+**Why that matters less than it sounds.** Look at what they would be bypassing: *their
+own* credential, reaching *their own* data, which they already have access to. The
+platform never held the keys to anybody else's data, so there is nothing to steal by
+going around us. This is the single biggest reason the data broker was removed
+([ADR-002](adr/0002-tenant-isolation-and-data-access.md)) — it implied a containment
+guarantee an in-process library could never actually make.
+
+**What is enforced, and where:**
+
+| Control | Where it lives | Can a tenant bypass it? |
+|---|---|---|
+| Who may reach the app at all | **the edge**, a separate process | **No.** Not their code |
+| Identity of the caller | the edge strips and re-injects `X-Auth-*` | **No.** Headers they send are discarded |
+| Secret custody | **IAM**, in the secret store | **No.** Not a library decision |
+| Which app runs as which identity | derived `sp-<app>`, set at deploy | **No.** Not tenant-declarable |
+| `require_role()` | the SDK, in their process | Yes — but only to widen access to *their own* app |
+| No credential in `app.yaml` | the manifest loader **and** CI | Yes at runtime; CI stops it shipping |
+| Redaction of telemetry | the SDK's logger | Yes, by writing their own logger |
+
+**The pattern: everything that protects *other people* is outside the tenant's
+process. Everything inside the SDK protects the tenant from their own mistakes.** That
+is the honest division, and it is why the edge stayed a separate service even after
+the broker was deleted.
 
 ---
 
-## 4 · What a tenant actually ships
+## 3 · What a tenant writes
 
-### Archetype A — web apps: two supported shapes
+Two files. Everything else is generated or inherited.
 
-| `web.type` | Serves HTTP | The team writes | Use it for |
-|---|---|---|---|
-| **`api`** | FastAPI | handlers returning JSON | An internal API other apps or agents call |
-| **`spa`** | FastAPI + static files | backend handlers **and** their own built bundle in `static/` | Frontend + backend, bespoke interaction |
+### `app.yaml` — the declaration
 
 ```yaml
-# app.yaml
-kind: web
-web:
-  type: spa
-  route: /headcount-dashboard
+app: comp-report
+team: people-analytics
+kind: job                        # web | job
+
+access:
+  manage:
+    owners:       [MG-PEOPLE-ANALYTICS]
+    contributors: [MG-PEOPLE-ANALYTICS-ENG]
+    readers:      []
+
+runtime:
+  size: medium                   # small | medium | large
+
+connections:
+  - name: hr-warehouse
+    engine: sqlite               # databricks-sql | redshift | postgres | rest | sqlite
+    path: ...
+    secret: hr-warehouse-token   # a NAME. Never a value
+
+job:
+  schedule: "0 6 * * MON"
+  timezone: Europe/Dublin        # explicit. "UTC vs local" causes one real incident per platform
+  timeout: 30m
+  retries: 2
+  concurrency: forbid
+  catchup: false                 # after an outage, do NOT fire a burst of missed runs
 ```
 
-**The insight that makes this work:** the SDK is a **library, not a web-framework
-integration**. `query()` is a function call. So the data, entitlement, masking and audit
-guarantees are identical in both shapes — what changes is only how HTTP is served.
+Four blocks: who manages it, what it connects to, how it runs, how big it is. The
+manifest has shrunk three times, and each removal was the same discovery — the field
+was a second copy of something stated elsewhere:
 
-| What varies by shape | Who provides it |
-|---|---|
-| Base image | platform (`python-web` for both) |
-| Static file serving | platform, mounted at the app's route for `spa` |
-| Data, audit, masking, logging, identity | **identical in both** |
+| Removed | Why | Where it lives now |
+|---|---|---|
+| `data:` + the catalog | teams already have access to their data | their own connection |
+| `access.roles` | a second authorization vocabulary beside the three tiers | `access.manage` |
+| `runtime.sdk` | uv.lock pins it and uv enforces it every build | `pyproject.toml` |
+| `runtime.base` | the tenant owns the Dockerfile | the `FROM` line |
+| `outputs[]` | bought a retention, cost a block of ceremony | `output()` + a default |
 
-#### Two shapes we removed, and why
+Each is **refused, not ignored**. A silently-dropped block is a team believing a rule
+is in force when it is not.
 
-The first version of this document described four. Cutting two was the single biggest
-simplification in the platform, and the reasoning is the same both times: **a three-person
-platform team must not own a UI framework on behalf of three hundred apps.**
-
-- **`dashboard` (FastAPI + Jinja), which was the default.** It meant the platform shipped a
-  template layout, a `render()` helper, and `table()`/`chart()` components — a design system
-  with two staff-years of work hiding inside it. It also introduced a class of bug the
-  platform would own forever: Jinja autoescaping escaped the platform's *own* component HTML,
-  so `table()` rendered as visible markup. Every team that wants a page can serve their own
-  bundle from `spa` instead, and then the platform owes them zero opinions about CSS.
-- **`streamlit`.** Genuinely the most requested, and genuinely the worst fit. Streamlit has no
-  middleware, so identity needs a bespoke header shim; its own health endpoint only proves the
-  process is up, so it needs a sidecar; it holds session state over a websocket, so it needs
-  sticky sessions and a replica cap; and it re-executes the whole script per interaction, so
-  it needs a caching wrapper around `query()` or every click is a warehouse hit. Four platform
-  mechanisms that exist for exactly one shape.
-
-The manifest loader **refuses** both rather than accepting them and failing at deploy:
-
-```
-web.type must be one of ('api', 'spa'), got 'streamlit'
-```
-
-That is the honest behaviour. A platform that advertises a shape it cannot support has moved
-the failure from a manifest error to a production incident.
-
-**Adding a shape back is a platform change, not a tenant one** — a base image, an identity
-mechanism and a health contract. The bar is that we are agreeing to patch it forever.
-
-A real `spa` backend, in full — this is the actual file, not a sketch:
+### `src/main.py` — the code
 
 ```python
-from insights_sdk import current_user, fetch, get_logger, query, require_role, web_app
+from insights_sdk import connect, get_logger, require_role, web_app
 
 app = web_app()          # login, identity, structured logs, metrics and /healthz
 log = get_logger()
 
-
-@app.get("/api/headcount")
-def headcount(month: str = "2026-09"):
-    require_role("headcount-viewer")          # 403 if they aren't in the group
-
-    rows = query(
-        "hr.headcount",
-        "SELECT dept, headcount FROM hr.headcount WHERE month = :month ORDER BY dept",
-        month=month,
+@app.get("/api/attrition")
+def attrition(month: str = "2026-09"):
+    require_role("reader")
+    rows = connect("hr-warehouse").query(
+        "SELECT dept, headcount FROM hr_headcount WHERE month = :month", month=month
     )
-
-    # Telemetry records the SHAPE of the result, never the result. Passing `rows`
-    # here would raise - the logger refuses anything that isn't a scalar.
-    log.info("headcount_viewed", month=month, rows=len(rows))
+    log.info("attrition_computed", month=month, departments=len(rows))
     return {"month": month, "departments": rows}
 ```
 
-Note what is *not* in that file: no login code, no connection, no credential, no table name,
-no logging setup. (There *is* a Dockerfile in the repo — generated once, theirs to edit. See
-[ADR-004](adr/0004-enforcement-and-platform-rules.md) for what that trade cost.)
+A job is the same, with `run_job(main)` instead of `web_app()`.
 
-### Archetype B — a scheduled job (`kind: job`)
-
-```python
-from insights_sdk import run_job, query, get_logger, output
-
-log = get_logger()
-
-def main():
-    rows = query("hr.compensation", "SELECT dept, base_salary FROM hr.compensation")
-    summary = summarise(rows)
-    output("weekly-equity-summary", summary)      # platform decides where it lands
-    log.info("done", departments=len(summary))    # counts, never rows
-
-if __name__ == "__main__":
-    raise SystemExit(run_job(main))
-```
-
-**The operational contract** — the questions a job actually raises, and where each is answered:
-
-| Question | Declared as | What the platform does |
-|---|---|---|
-| Who am I running as? | — | A service identity, `sp-comp-report`. There is no logged-in human at 6am |
-| How long may I run? | `job.timeout: 30m` | SIGTERM at 30m, SIGKILL 30s later |
-| What if I fail? | `job.retries: 2` | Retries with backoff, then `on_failure` pages the owners |
-| Last run still going? | `job.concurrency: forbid` | Skips this run — the safe default for anything that writes |
-| Platform was down at 6am? | `job.catchup: false` | Does **not** fire a burst of missed runs on recovery |
-| Where do results go? | `outputs[]` | You name the artefact and its retention; the platform owns the location |
-| How do I not double-process? | — | The SDK hands you a stable `run_id` to key idempotency on |
-
-**Jobs are not deployed as services.** The registry records `kind: job` and the schedule; the
-scheduler runs them. A job built on `python-data` has no web server in its image, so it
-*cannot* quietly become an unmonitored API.
+Not in either file: login, session handling, a credential, a host, logging setup, a
+health endpoint, or a pipeline.
 
 ---
 
-## 5 · What each line of `app.yaml` becomes
+## 4 · The two archetypes
 
-The manifest is not documentation. Every line turns into something real at deploy time.
+| | `kind: web` | `kind: job` |
+|---|---|---|
+| Started by | the edge, per request | the scheduler, on a cron |
+| Runs as | **the signed-in user** | **`sp-<app>`**, a service identity |
+| Gets | a route, sign-in, per-request identity | a cron slot, timeout, retries, concurrency control |
+| Writes | HTTP responses | `output()` artefacts |
 
-| You declare | It becomes |
-|---|---|
-| `access.manage.owners` | GitHub repo admin · **approver on `prod`** · the only group that may request data access · notified on job failure and break-glass |
-| `access.manage.contributors` | GitHub write · approver on `uat` · reads logs · **cannot** release to prod |
-| `access.manage.readers` | GitHub read · sees the app in `insights status` and its telemetry · no deploys, no data |
-| `access.roles[].name` | What `require_role()` checks at runtime |
-| `access.roles[].groups` | Corporate groups reconciled into the edge's authorization table. Nobody hand-creates a group |
-| `runtime.base` | Which published base image is built FROM |
-| `runtime.size` | ECS CPU/memory and desired count |
-| `runtime.sdk` | Checked against the support window; CI fails if it disagrees with `pyproject.toml` |
-| `data[].dataset` | The scope of the app's service identity: **an IAM policy statement** allowing exactly those datasets' resources, and the list `insights doctor` verifies against the data platform's grants. It does **not** grant anything — the data owner does that |
-| `web.type` | Base image, identity shim and health contract for that shape |
-| `web.route` | An ALB listener rule |
-| `job.schedule` + `timezone` | An EventBridge Scheduler rule |
-| `job.timeout / retries / concurrency / catchup` | Scheduler and task-definition settings |
-| `outputs[]` | An S3 prefix scoped to the app, with a lifecycle rule for `retention` |
-| `environments.<env>.approvers` | The GitHub environment's required reviewers |
+Web apps come in two shapes — `api` (JSON only) and `spa` (a backend plus the team's
+own built bundle, served from the same origin). The SDK is a **library, not a
+web-framework integration**, so `connect()` is a function call and behaves identically
+in both.
 
-> **The important one is `data[]`.** It is checked twice, by two systems that don't trust each
-> other: our broker refuses an undeclared dataset, *and* IAM refuses the secret. Our code would
-> have to be wrong **and** AWS would have to be wrong.
+**Two shapes we removed:** a Jinja `dashboard` type and `streamlit`. Both meant the
+platform owning a UI framework on behalf of three hundred apps — Streamlit alone
+needed a header shim for identity, a health sidecar, sticky sessions with a replica
+cap, and a caching wrapper so one click was not one warehouse query. Four platform
+mechanisms for one shape. The manifest loader **refuses** them rather than accepting
+and failing at deploy.
 
 ---
 
-## 6 · Authentication and authorization, end to end
-
-The part worth being precise about. **Authentication** is *who are you*. **Authorization** is
-*what may you do*. They are different systems, and mixing them up is how platforms leak.
-
-| Question | Answered by | Where |
-|---|---|---|
-| Who are you? | Corporate SSO — Entra/Okta on AWS, Dex locally | outside the platform |
-| Which teams are you in? | Group claims in the token from the IdP | outside the platform |
-| May you reach this app **at all**? | The edge, from the manifest's groups | `runtime/edge/` |
-| May you do **this action** in it? | `require_role()` in the app | tenant code, SDK-enforced |
-| May this **app** read this data? | Registry + dataset-owner grant + IAM | SDK broker |
-
-Note the last three are separate. *You* being allowed to open the compensation report does not
-mean the *report* may read the compensation table. Nor does being able to deploy the app.
-
-### 6.1 · Authentication — the full exchange in production
+## 5 · Identity: how a person reaches a row
 
 ```mermaid
 sequenceDiagram
-  autonumber
-  participant B as Browser
-  participant ALB as ALB<br/>(front door)
-  participant E as Entra ID
-  participant ED as Edge
-  participant A as Your app
+    participant B as Browser
+    participant E as The edge
+    participant A as Tenant app
+    participant W as Their warehouse
 
-  B->>ALB: GET /headcount-dashboard
-  ALB->>ALB: no session cookie
-  ALB->>B: 302 to Entra /authorize<br/>(code flow + PKCE, scope: openid profile groups)
-  B->>E: sign in — password, MFA, conditional access
-  E->>B: 302 back to ALB /oauth2/idpresponse?code=...
-  B->>ALB: follow redirect with the code
-  ALB->>E: exchange code for tokens (client_secret)
-  E-->>ALB: id_token + access_token
-  ALB->>ALB: verify id_token against Entra JWKS<br/>check iss, aud, exp, nonce
-  ALB->>B: Set-Cookie: AWSELBAuthSessionCookie (encrypted)
-  ALB->>ED: forward + x-amzn-oidc-data (JWT signed by the ALB)
-  ED->>ED: VERIFY that JWT against the ALB public key
-  ED->>ED: DELETE every X-Auth-* header the browser sent
-  ED->>A: X-Auth-User · X-Auth-Groups · X-Auth-Request-Id + edge assertion
-  A->>A: Caller(trusted=True)
+    B->>E: GET /a/attrition-api/api/attrition
+    Note over E: no session, so 401
+    B->>E: sign in — OIDC, or ?as= locally
+    E-->>B: 303 and an HttpOnly session cookie
+    B->>E: GET again, with the cookie
+    Note over E: LAYER 1 — is this person in a<br/>group that may use this app?
+    Note over E: STRIP every X-Auth-* the client sent,<br/>INJECT validated ones plus an edge token
+    E->>A: proxied, with X-Auth-User / Groups / Edge-Token
+    Note over A: LAYER 2 — require_role("reader")
+    A->>W: query, using the APP's credential
+    W-->>A: rows
+    A-->>B: JSON
 ```
 
-Two steps carry almost all the security weight:
+**The trust model in one line: an app trusts identity only when the platform edge put
+it there.** Anything a client sent is discarded, not merely distrusted.
 
-- **Step 11 — verify, don't decode.** `x-amzn-oidc-data` is a signed JWT. If the edge merely
-  base64-decodes it, then anything that can reach the edge directly — another task in the VPC,
-  a misrouted listener rule — can forge any identity it likes. The edge fetches the ALB's
-  public key by the `kid` in the header and checks the signature.
-- **Step 12 — strip before you trust.** If the edge doesn't delete the `X-Auth-*` headers the
-  browser sent, `curl -H "X-Auth-Groups: comp-analyst"` is a complete bypass and the app
-  cannot tell the difference. Strip everything, then add our own.
+Four failure modes, all verified live:
 
-### 6.2 · The same thing locally
+| Attempt | Result |
+|---|---|
+| No identity | `401` |
+| Forged `X-Auth-User` + forged edge token | `401` — headers stripped before anything is added |
+| Valid cookie + forged `X-Auth-Groups` | returns the caller's **real** groups |
+| Bypass the edge, call the app port directly | `{"subject":"anonymous","trusted":false}` |
 
-The goal is **one code path**, not a local special case. The edge always does the same thing:
-verify a signed JWT from the front door. Only two settings differ.
+That last row is the design: running outside the edge is not "an app with no user", it
+is an app where every check returns no. `Caller.groups` is a **property** returning
+`()` unless `trusted` — fail-closed as a data structure, not as a discipline someone
+has to remember. `connect()` requires a trusted caller for the same reason: the
+credential belongs to the app, and should not be usable on behalf of nobody.
 
-| | Local — what runs today | Production — recommended |
-|---|---|---|
-| Front door | the platform edge (FastAPI) | ALB with an OIDC action |
-| IdP | none — `?as=` sets a signed cookie | Entra ID |
-| Sign-in | pick a user from `runtime/edge/users.yaml` | real password + MFA |
-| What the edge trusts | a session cookie it set itself | a JWT signed by the ALB, verified against its JWKS |
-| What the **app** trusts | `X-Auth-*` plus a shared edge token | the same headers, plus the same shared secret |
+### SSO is added per app by adding nothing
 
-**Be precise about what is and is not proven locally.** The trust *boundary* is real and
-tested: the edge strips every client-supplied identity header, re-injects verified ones, and
-an app without a valid edge assertion has a caller with no groups. What is **not** exercised
-locally is signature verification — the local edge checks a cookie it issued, not an OIDC
-token. Swapping that for JWKS verification is one function in `runtime/edge/main.py`, and
-everything downstream is unchanged because everything downstream consumes the *edge's*
-assertion rather than the IdP's.
-
-> **Real-world detail worth knowing:** Entra emits group **object IDs** in the `groups` claim,
-> not names — and above ~200 groups it stops emitting them entirely and sends a Graph API
-> link instead. So the edge resolves IDs to names once and caches, and the platform's group
-> mapping lives in the registry rather than in every app. This is the sort of thing that
-> turns a two-day integration into a two-week one if nobody writes it down.
-
-### 6.3 · Authorization — three layers, three different places
-
-```mermaid
-flowchart TB
-  R["request arrives with a verified identity"] --> L1{"<b>Layer 1 — the edge</b><br/>is this person in ANY group<br/>this app declared?"}
-  L1 -->|"no"| D1["403 at the edge<br/><i>the app never sees the request</i>"]
-  L1 -->|"yes"| L2{"<b>Layer 2 — the app</b><br/>require_role('headcount-viewer')"}
-  L2 -->|"no"| D2["403 from the app<br/><i>reached it, may not do this</i>"]
-  L2 -->|"yes"| L3{"<b>Layer 3 — the broker</b><br/>is the DATA allowed?"}
-  L3 -->|"not in app.yaml"| D3["EntitlementError"]
-  L3 -->|"restricted, no owner grant"| D4["EntitlementError"]
-  L3 -->|"yes"| OK["rows — masked to this caller's roles, and audited"]
-```
-
-| Layer | Asks | Why there |
-|---|---|---|
-| **1 · Edge** | May this person reach this app at all? | Cheapest possible rejection, and someone with no access can't even probe the app's routes |
-| **2 · App** | May they do *this*? | Only the app knows which route needs which role — the platform shouldn't have to |
-| **3 · Broker** | May the *app* read this data? | A different question entirely: about the app's entitlement, not the person's |
-
-Layer 3 is worth restating: it's about the **app**, not the user. A compensation analyst
-opening an app that never declared `hr.compensation` still gets nothing — the app has no
-entitlement, regardless of who is asking.
-
-### 6.4 · Frontend to backend — where the token actually lives
-
-**There is no token in the browser.** That's the design, and it's deliberate.
-
-```mermaid
-flowchart LR
-  subgraph BR["Browser — same origin for everything"]
-    UI["your UI<br/>page, SPA bundle, or Streamlit"]
-  end
-  UI -->|"fetch('/api/headcount')<br/><b>cookie rides along</b><br/>no Authorization header"| FD["Front door<br/>validates the session cookie"]
-  FD -->|"signed JWT"| ED["Edge"]
-  ED -->|"verified identity headers"| BE["Your backend"]
-  BE --> SDK["SDK broker"]
-```
-
-For **all four web shapes** the UI and the backend are the **same origin**, behind the same
-front door. So:
-
-- The browser holds only an **encrypted session cookie** it cannot read.
-- A `fetch('/api/headcount')` from your SPA is same-origin — the cookie is attached
-  automatically and you write no auth code in the frontend at all.
-- **No access token is ever in `localStorage`, `sessionStorage` or JavaScript memory.** An XSS
-  bug cannot exfiltrate a token that does not exist. This is the single biggest reason for
-  same-origin rather than a separate frontend host with a bearer token.
-- The **backend never sees a token either** — it sees the edge's verified headers. So a tenant
-  cannot accidentally log one, forward one, or use one to call something else.
-
-Because auth is cookie-based, cross-site request forgery is the trade-off — and **it is not
-handled yet.** The session cookie is `SameSite=Lax`, which covers the common case, but there
-is no CSRF token and no middleware enforcing one. Both example apps are read-only, so nothing
-in this submission is exposed; the first state-changing endpoint would be. It is in ADR-005's
-trigger list rather than described as if it existed.
-
-**Streamlit is the same story with a different mechanic.** Streamlit has no middleware, so the
-SDK reads the edge's headers from `st.context.headers` and builds the identical `Caller`.
-Its websocket carries the same cookie on the upgrade request, so the session applies to the
-whole interaction rather than just the first page load.
-
-### 6.5 · When there is no browser
-
-| Caller | How identity is established | What it may read |
-|---|---|---|
-| **A scheduled job** | The scheduler constructs `sp-comp-report`, trusted because the *platform* built it, not a network client. Groups come from `access.manage.owners` | `data[]` in its manifest, plus an owner's grant if restricted. Unmasking roles come from the **grant**, never its own manifest |
-| **An app calling another app** | **Not supported today.** No service-to-service tokens. The trigger is the first real need; until then the honest answer is that it would be a new trust boundary and deserves its own decision | — |
-| **A platform engineer** | Their own SSO identity — which carries **no** dataset grants. Reading tenant rows needs break-glass: owner-approved, time-boxed, audited, tenant notified | nothing by default |
-
-## 7 · Data — what runs locally, and what it becomes
-
-> **Locally:** one SQLite file, and the broker enforces everything itself.
-> **The recommendation:** Unity Catalog owns governance and the broker stops enforcing it.
-> This section is mostly about the second, because it is where the interesting decision is.
-
-### The problem
-
-One company lakehouse. Twenty-five apps. Some of what's in there is headcount; some is
-salaries. If every app gets a credential to the warehouse, every app can read everything, and
-the query log says "the warehouse user ran a query" rather than which app, for whom.
-
-### The shape of the answer
-
-**Unity Catalog owns data governance. We do not reimplement it.**
-
-| Governance question | Answered by | Not by us |
-|---|---|---|
-| Who owns this table? | UC object owner (a group) | ✗ |
-| How sensitive is it? | UC tag, e.g. `sensitivity=restricted` | ✗ |
-| Who may read it? | `GRANT SELECT ... TO <group>` | ✗ |
-| Which columns may *this person* see? | UC **column mask** | ✗ |
-| Which rows may they see? | UC **row filter** | ✗ |
-| Who read what, when? | UC `system.access.audit` | ✗ |
-
-This is a deliberate reversal from where a platform team's instinct goes. Masking and row-level
-security were in our broker; they are now Unity Catalog's, because a governance model
-maintained by three engineers *beside* the one the data platform already enforces is a second
-source of truth that will drift, and drift silently.
-
-### So what does Insights Hub still do?
-
-If the answer were "nothing", the platform would be redundant. It is five things UC does not do:
-
-| # | What we do | Why UC cannot |
-|---|---|---|
-| 1 | **The app contract.** `app.yaml` declares which datasets an app uses | UC knows principals, not "apps". We map app → service principal → grant request |
-| 2 | **Fail early and legibly.** Undeclared dataset → error in CI and at startup | UC fails at query time with `PERMISSION_DENIED on table x`, in production, to a user |
-| 3 | **Alias indirection.** `hr.headcount` → `hr_dev.people.headcount` or `hr_prod.people.headcount` | UC's name *contains* the environment, so portable tenant SQL needs a layer above it |
-| 4 | **Identity bridging.** Carry the end user's identity from the browser session into Databricks | The gap between a web session and a warehouse principal is exactly the bit nobody supplies |
-| 5 | **Correlation.** Join "HTTP request R by user U in app A" to "Databricks query Q" | UC's audit knows the query and the principal. Only we know the app and the request |
-
-**One sentence:** *Unity Catalog owns the data. We own the application platform, and the bridge
-between them.*
-
-### What a tenant writes — unchanged
-
-```python
-rows = query("hr.headcount", "SELECT dept, headcount FROM hr.headcount")
-```
-
-`hr.headcount` is a **nickname**. The registry says what it means:
+There is no per-app auth configuration. An app declares *who may use it*:
 
 ```yaml
-hr.headcount:
-  owner: MG-PEOPLE-OPS                       # mirrors the Unity Catalog owner
-  locations:
-    dev:  {uc: hr_dev.people.headcount}
-    prod: {uc: hr_prod.people.headcount}
+access:
+  manage:
+    owners: [MG-PEOPLE-ANALYTICS]
 ```
 
-Note what is **no longer** in the registry: `classification` and `masking`. Those moved to UC
-tags and UC column masks. Our registry is now what ADR-002 always said it should become —
-**a projection, not a source of truth** — and it holds only what the *application* layer needs:
-the nickname, the environment mapping, and the owner to route a request to.
+and the deploy pipeline reconciles those groups into the edge's authorization table.
+The three tiers **nest** — an owner satisfies `require_role("reader")` — because the
+alternative is listing owners in three places, and forgetting once is a lockout that
+looks like a platform bug.
 
-### Where the password is — there isn't one
-
-The sharpest question about any platform like this: *if the platform team manages the
-credentials, they can read the data.* The answer is to make sure **no credential exists**.
-
-```mermaid
-flowchart TB
-  subgraph I["Interactive app — a real person is present"]
-    U["Krishna signs in via Entra"] --> S["their session"]
-    S --> TE["token exchange<br/>(Databricks federates to the same Entra)"]
-    TE --> UT["a short-lived token <b>for Krishna</b>"]
-    UT --> UC1["Unity Catalog sees krishna@corp.example<br/>applies THEIR grants, masks and row filters"]
-  end
-  subgraph J["Scheduled job — nobody is present"]
-    TR["ECS task role"] --> WIF["workload identity federation<br/>(OIDC, no client secret)"]
-    WIF --> ST["a short-lived token for <b>sp-comp-report</b>"]
-    ST --> UC2["Unity Catalog sees the service principal<br/>applies ITS grants"]
-  end
-```
-
-| | Interactive | Scheduled job |
-|---|---|---|
-| Who does UC see? | **the actual person** | the app's service principal |
-| Where does the token come from? | OAuth token exchange from their session | **Workload identity federation** from the ECS task role |
-| Is a secret stored anywhere? | **No** | **No** — federation, not a client secret |
-| Can a platform engineer read it? | **There is nothing to read** | **There is nothing to read** |
-| Who enforces column/row access? | Unity Catalog, per person | Unity Catalog, per principal |
-
-**This is the part that answers the objection properly.** With per-user tokens, UC applies
-*Krishna's* column masks — so the platform team cannot see compensation by impersonating an app,
-because the app has no standing credential to impersonate. And a platform engineer who wants
-to read tenant data must get a Unity Catalog grant from the **data owner**, recorded in UC's
-own audit, which we cannot edit.
-
-The residual: AWS Secrets Manager still holds genuinely external secrets — a third-party API
-key. Those get a resource policy granting only the app's task role, and a KMS key policy that
-**explicitly denies the platform role**, so we cannot self-serve even with admin.
-
-### We verify. We do not grant.
-
-Declaring a dataset is not access, and the platform cannot supply it — we do not own the data.
-The **data owner** grants it, in their own system, to the app's service identity.
-
-What the platform does instead is **check**: `insights doctor` and CI read the data platform's
-grant state and refuse early, naming the identity that lacks access and the group to ask. That
-turns a 06:00 `PERMISSION_DENIED` into a failure at someone's desk before they ship.
-
-There is deliberately no `insights access approve`. A command that looked like we could grant
-would misrepresent where authority actually lives.
+Locally the `?as=` stub stands in for the IdP redirect; in production it is ALB native
+OIDC. The app only ever sees `X-Auth-*` from a trusted edge, which is why the
+substitution costs nothing in `src/`.
 
 ---
 
-## 7a · Monitoring — enough to actually operate
+## 6 · Data: connectors, not a broker
 
-The brief asked for "logs/metrics enough to actually operate", and metrics are the part most
-platforms leave as a to-do. **A tenant writes nothing for any of this.**
+The platform ships the plumbing. The team owns the connection.
 
-| Signal | Emitted by | Lands in | The question it answers |
-|---|---|---|---|
-| **Rate** | SDK middleware, every request | CloudWatch EMF | Is anyone using it? |
-| **Errors** | SDK middleware, by status class | CloudWatch EMF | Is it broken? |
-| **Duration** | SDK middleware, p50/p95/p99 | CloudWatch EMF | Is it slow? |
-| **Job outcome** | `run_job()` — success, failure, duration, retries | CloudWatch EMF | Did the 6am run work? |
-| **Data reads** | the broker — dataset, rows, ms, sensitivity | our correlation record + UC system tables | Who read what, from which app, for which request? |
-| **Deprecated SDK use** | `@deprecated` | CloudWatch EMF | Who is blocking the next major? |
+| Ours | Theirs |
+|---|---|
+| the driver, pooling, timeouts, TLS | which system, which database |
+| error translation | the query |
+| the secret binding | every row that comes back |
+| telemetry *about* the connection | — |
 
-**A dashboard per app, built at deploy time** — not by hand, and not a thing a team has to
-remember. Six panels: request rate, error rate, p95 latency, last job outcome, data reads by
-dataset, SDK version. Twenty-five apps get twenty-five identical dashboards for free.
+A query leaves behind: which connection, which engine, how long, how many rows. **Not
+the SQL.** SQL carries table and column names and often a literal in a `WHERE` clause,
+so a platform-wide log of tenant SQL is a data inventory nobody consented to.
 
-**Four alarms, also generated:**
+### Error translation is what earns the wrapper
 
-| Alarm | Threshold | Goes to |
-|---|---|---|
-| 5xx rate | >2% over 5 min | `access.manage.owners` |
-| Job failed after final retry | any | `access.manage.owners` |
-| Job overran its `timeout` | any | owners + the platform team |
-| **App queried data it never audited** | any | **the platform team** |
+Six driver signatures map to a message that names the connection, says what to check,
+and says **who fixes it** — because on a multi-tenant platform the answer is usually
+not the platform team, and a message that does not say so sends the ticket to the
+wrong place.
 
-The last one is the important one, and it's the detection control behind ADR-003: an app
-reaching data outside the broker produces no audit record while its request logs keep flowing.
-That mismatch is detectable, and it is the alarm worth writing first.
-
-**What is deliberately not built:** SLOs and error budgets. An SLO nobody is accountable for is
-a number on a dashboard. The trigger is the first tenant whose app is in a business-critical
-path (ADR-005).
-
-## 7b · How an unattended job gets a credential
-
-The question a compliance reviewer asks second, after "who can read compensation": *a job runs
-at 06:00 with nobody logged in — where does its credential come from, and who else can read it?*
-
-**The principle: the job holds an identity, not a credential.** It exchanges that identity for a
-token at the moment of the query. The token expires in about an hour and nothing is persisted.
-
-```mermaid
-flowchart TB
-  S["EventBridge Scheduler<br/>06:00 Monday"] --> T["the task starts<br/><i>with a workload identity, not a password</i>"]
-  T --> Q["query('hr.compensation', ...)"]
-  Q --> C1{"declared in app.yaml?"}
-  C1 -->|no| X(["EntitlementError"])
-  C1 -->|yes| C2{"granted to this service principal in UC?"}
-  C2 -->|no| X
-  C2 -->|yes| TOK["obtain a short-lived Databricks token<br/><i>mechanism depends on the runtime - see below</i>"]
-  TOK --> UC["Unity Catalog sees sp-comp-report<br/>applies ITS grants and column masks"]
-  UC --> A["audit: app · dataset · rows · run_id"]
-  A --> D(["token discarded"])
+```
+ConnectionFailed: connection 'hr-warehouse' (postgres): the credential was rejected.
+  Check the secret's value and that it has not expired or been rotated. Your team
+  owns it - the platform stores the slot and cannot read it.
+  driver said: FATAL: password authentication failed for user "svc_hr"
 ```
 
-### The three mechanisms, and why the runtime decides
+`auth` and `not_found` are the team's. `tls` and `network` are usually ours. The
+console surfaces that split as `likely_owner` across the fleet.
 
-Databricks workload identity federation consumes an **OIDC** token. Whether the workload has one
-is a property of where it runs, and this is the detail that is easy to get wrong:
+### "Let's add support for another data source"
 
-| Runtime | Has an OIDC identity? | How the job gets a token | Secret exists? |
-|---|---|---|---|
-| **Kubernetes** (IRSA / Pod Identity) | **Yes** — the projected ServiceAccount token | Exchange it directly with Databricks | **No** |
-| **GitHub Actions** | **Yes** — `ACTIONS_ID_TOKEN_REQUEST_URL` | Same as above | **No** |
-| **ECS Fargate** | **No** — a task role is IAM/SigV4 | (a) read a per-app client secret from Secrets Manager, scoped to that task role, or (b) call a platform **token broker** with SigV4 and let it federate | (a) one per app · (b) one, held once |
+A new engine is a platform change, and a small one. Four steps:
 
-> **Say this plainly rather than claiming more than is true.** "No stored credential exists" is
-> fully true on Kubernetes and only mostly true on ECS. On Fargate there is either one secret per
-> app — readable by exactly one task role, and by nobody else without an auditable IAM change —
-> or one broker that mints scoped tokens and logs every mint. Both are defensible. Neither is
-> "nothing to read".
->
-> This is a genuine argument for Kubernetes and it is recorded as one in
-> [ADR-005 §12](adr/0005-deliberate-omissions-and-triggers.md).
+1. **Add it to `_ENGINES`** in `connectors.py` — reuse `SqlConnector` for anything
+   DB-API shaped (Redshift, Postgres, Snowflake, Databricks SQL), or add a class with
+   a `query()` method for a different protocol.
+2. **Add its driver signatures to `_SIGNATURES`** so its errors translate. The only
+   part needing judgement: every driver spells "auth failed" differently and none
+   expose a stable code.
+3. **Document the options a team puts in `app.yaml`.** The options dict is passed
+   through, so there is no schema to extend.
+4. **The driver goes in the tenant's `pyproject.toml`**, not a platform image. Teams
+   own their dependencies; vendoring every driver would mean every app carrying every
+   team's drivers.
 
-### What keeps it safe regardless of mechanism
-
-| Property | How it is achieved | What breaks without it |
-|---|---|---|
-| **One identity per app** | A Databricks service principal per app, never per team | Blast radius becomes the union of every dataset any app on the team can read |
-| **Granted by the owner, not by us** | The data owner grants the SP in their own system; the platform only verifies | The platform team could grant itself data access |
-| **Short-lived** | ~1h tokens. The federation trust itself never expires, so there is no rotation task to forget | A leaked long-lived token is valid until someone notices |
-| **Attributable** | UC's audit records the SP; our correlation record ties it to the `run_id` | "Something read compensation at 06:00" instead of "this job, this run" |
-| **Never impersonates a person** | A job acts as itself | An unattended run attributed to a human is a lie in the audit trail |
-
-### What must never happen
-
-A Databricks **personal access token** in a GitHub secret. One **shared** service principal
-across apps. A credential in a tenant's repo, or in an environment variable a team sets
-themselves. Each destroys a different row of the table above — and each is the path of least
-resistance, which is exactly why the platform removes the choice rather than documenting against
-it (ADR-004).
-
-### What exists in this submission
-
-`adapters.DatabricksEngine._service_token()` is the seam, and it raises `NotImplementedError`
-with a pointer to this section. Locally there is no token at all: the stub warehouse is a SQLite
-file and the path is in the environment. That is the honest local gap, and
-[COMPLIANCE.md](../COMPLIANCE.md) says so in the same words.
+`SUPPORTED_ENGINES` is derived from `_ENGINES`, so the manifest loader and the deploy
+gate both pick it up with no second list to update. A team naming an unsupported
+engine gets a manifest error listing the supported ones.
 
 ---
 
-## 8 · Deploying — dev, uat, prod
+## 7 · Secrets: the platform holds the slot, never the value
+
+A team needs a credential. Somebody has to store it. If the platform team stores it,
+three people can read every team's database password — and "we promise not to look" is
+not a control.
+
+```
+app.yaml            secret: hr-warehouse-token        <- a REFERENCE
+secret store        insights/comp-report/hr-warehouse-token
+writes the value    the app's owning group
+reads the value     sp-comp-report, on its own prefix only
+CANNOT read it      the platform team, by explicit IAM Deny on insights/*
+sees every read     CloudTrail, including ours
+```
+
+**Custody is a property of the thing issuing credentials, not of us choosing not to
+call `GetSecretValue`.** An explicit `Deny` cannot be overridden by any `Allow`, so it
+survives somebody later granting the platform role broad access by accident.
+
+In the SDK, `Secret.reveal()` is the only path to the value. `str`, `repr`, f-strings
+and `format` all give `<Secret name REDACTED>` — defence in depth behind the telemetry
+rules, because the expensive leak is the one nobody wrote on purpose.
+
+The manifest loader refuses `password`, `token`, `api_key`, `client_secret` and `dsn`
+outright. `app.yaml` is in git; a credential there is in the history forever, and
+"we removed it in the next commit" is not a remediation.
+
+---
+
+## 8 · Operability
+
+| Question | Answer |
+|---|---|
+| Is it deployed? | `insights status` |
+| Did it boot? | `insights logs --app X --startup` — the **process** log |
+| What did it do? | `insights logs --app X` — the **telemetry** |
+| Can it reach its systems? | `insights connections --probe`, and `/healthz` |
+| Across the fleet? | the console, at `/a/console/` |
+
+The startup/telemetry split matters: an app that dies on import emits **no** telemetry,
+so the structured view is empty and reads as "no traffic" rather than "crashed".
+
+**Health checks the dependencies, not the process.** `/healthz` resolves every declared
+connection and confirms the credential arrived — so the common production failure (a
+deploy that starts fine and fails on first use) surfaces at the health check. It does
+*not* run a query: one hitting the warehouse every 30 seconds across three hundred apps
+is a load generator, and it turns someone else's outage into our own red dashboard.
+
+**The console is a tenant of the platform.** It registers like any app, sits behind the
+edge, and gets the same session cookie and group check. If the edge breaks, the tool
+you would use to diagnose it breaks identically — a better bug to have than a console
+that works when nothing else does. It shows **telemetry, never rows**: it cannot leak
+what the platform never collected.
+
+**Scheduler run state is SQLite**, not a dict in the process. `concurrency: forbid` and
+fire-once-per-minute were true only within one process lifetime until it was; dedupe is
+now a `PRIMARY KEY` constraint that survives a restart, with a reaper so one crash does
+not block a job forever.
+
+---
+
+## 9 · What CI enforces
+
+Every tenant repo's pipeline is a four-line caller onto a central reusable workflow.
+The platform owns the pipeline even though it does not own the code.
+
+| Check | Why it is in CI and not elsewhere |
+|---|---|
+| The manifest parses, and names the app being built | the generator gets it right; people edit afterwards |
+| No `access.roles`, `runtime.sdk` or `runtime.base` | removed fields, refused rather than ignored |
+| Every connection names a supported engine | a typo is otherwise a runtime failure at 06:00 |
+| No credential embedded in a connection option | nothing at runtime can un-leak a committed secret |
+| No secret pattern anywhere in the repo | same |
+| `insights-sdk` is a range, not a pin, inside the N-2 window | only knowable against the platform's support window |
+| The Dockerfile's base is pinned, not `:latest` | `:latest` means the build is not reproducible |
+| The Dockerfile sets a non-root final `USER` | nothing at runtime undoes a root breakout |
+| `uv sync --frozen` resolves | the lockfile must be current, or the image is not what you tested |
+| Tests pass | — |
+
+Some of these run **twice** — in CI and again in the SDK at runtime — because CI can be
+bypassed and the runtime cannot.
+
+**What CI deliberately does not check:** whether a connection actually works. The
+deploy runner is not in the app's network and does not hold the app's credential, by
+design. Reachability is `/healthz`'s job, from where the app runs, which is the only
+place the answer means anything.
+
+---
+
+## 10 · Upgrades: how a platform change reaches a running app
+
+Three mechanisms, because "a platform change" is three different things.
+
+| What changes | How it reaches deployed apps | Tenant action |
+|---|---|---|
+| SDK behaviour | a version **floor**, not a pin (`>=0.1,<1`) | `uv lock --upgrade-package insights-sdk` |
+| Generated files (CI, runbook) | `insights upgrade-scaffold` | review the diff, commit |
+| The edge, scheduler, console | deployed by us | none |
+
+**Nothing is forced.** `uv.lock` pins the exact version an app runs, so a release
+cannot change a running app underneath it. That is the trade for an SDK — and these
+four mechanisms are what stop "opt-in" becoming "never":
+
+- **Floor, not pin.** `==` is refused. Patches and minors arrive on re-lock.
+- **N-2 support window.** The deploy gate fails an app outside it, so a team finds out
+  at their desk rather than on the day they need to ship urgently.
+- **Expand/contract.** Add the new thing, deprecate the old, remove it a major later.
+- **Deprecation telemetry.** A `@deprecated` call emits a record naming the call, its
+  replacement, and the version it disappears in — so we know who is still on it
+  *before* removing it, instead of finding out afterwards.
+
+### "A tenant needs Python 3.10 and the platform supports 3.12"
+
+Two parts, and the first is easy:
+
+1. **The image is not the problem.** They edit one line — `FROM python:3.10-slim`.
+   Nothing in the platform pins a tenant's interpreter, and no platform base image
+   exists to be on the wrong version. CI checks only that the base is pinned and the
+   final user is not root.
+2. **The SDK is the problem, and it is real.** It declares `requires-python = ">=3.12"`,
+   so `uv sync` refuses to install — clearly, at their desk, rather than subtly at
+   runtime.
+
+What we would actually do, in order: find out **why** — nine times in ten it is one
+dependency without a 3.12 wheel, and usually already fixed upstream. If it is real,
+**lower the SDK floor to 3.10**: nothing in it needs 3.12 beyond syntax we can avoid,
+and the cost is one more CI matrix entry. If the blocking dependency will never
+support 3.12, that is an argument for that app not being on this platform — better
+said out loud than worked around.
+
+What we would **not** do is maintain a second SDK major for one team. One version
+line, and a support window generous enough that nobody is forced.
+
+---
+
+## 11 · Local vs production
+
+Everything runs locally with `insights up` — no Docker, no cloud account, no
+credentials. The recommended production stack is **AWS for the application layer,
+Databricks for the data layer**.
 
 ```mermaid
 flowchart LR
-  PR["pull request"] -->|"ci.yml"| CI["validate · test · gates<br/><i>deploys nothing</i>"]
-  CI --> M["merge to main"]
-  M -->|"deploy-dev.yml<br/>automatic"| DEV["DEV<br/>schedules disarmed"]
-  DEV -->|"deploy-uat.yml<br/>contributors approve"| UAT["UAT<br/>promotes the dev image"]
-  UAT -->|"deploy-prod.yml<br/>OWNERS approve"| PROD["PROD<br/>promotes the uat image"]
+  subgraph L["LOCAL"]
+    direction TB
+    L1["insights up"]
+    L2["edge — FastAPI proxy, ?as= sign-in"]
+    L3["apps — uvicorn, one per app"]
+    L4["scheduler — cron matcher, SQLite run state"]
+    L5[("fakes: sqlite warehouse,<br/>REST stub, file secret store")]
+    L1 --> L2 --> L3 --> L5
+    L1 --> L4 --> L3
+  end
+
+  subgraph P["PRODUCTION"]
+    direction TB
+    P1["ALB — TLS, native OIDC"]
+    P2["EKS / ECS — one workload per app"]
+    P3["EventBridge Scheduler"]
+    P4[("Secrets Manager<br/>insights/&lt;app&gt;/*")]
+    P5[("Databricks · Unity Catalog<br/>the team's own grants")]
+    P1 --> P2 --> P4
+    P2 --> P5
+    P3 --> P2
+  end
+
+  L -.->|"same src/, same app.yaml"| P
 ```
 
-Four generated files in the tenant repo, each four lines: `ci.yml`, `deploy-dev.yml`,
-`deploy-uat.yml`, `deploy-prod.yml`. Each calls one platform workflow.
-
-- **Build once.** The image is built in dev. uat and prod *promote that exact image* — they
-  never rebuild. If prod rebuilt, prod would run something nobody tested.
-- **Approvers come from the manifest**, not the tenant's pipeline. A team cannot grant itself a
-  production deploy by editing its own workflow, because its workflow is four lines.
-- **Separate AWS accounts** per environment — a hard boundary, not a naming convention.
-
-At release the platform **reconciles** the manifest: roles become groups, `data[]` becomes an
-IAM policy, `web.route` becomes a listener rule, `job.*` becomes a schedule. Then it verifies
-`/healthz`, which resolves every declared dataset and checks its credential arrived — so
-*deploys fine, breaks on first use* surfaces during the deploy.
-
----
-
-## 9 · Running it locally
-
-```bash
-uv run insights up
-```
-
-That is the whole setup. Python 3.12 and [uv](https://docs.astral.sh/uv/); no Docker, no
-cloud account, no credentials, nothing to install by hand.
-
-It seeds the SQLite warehouse, starts the internal-REST-API stub, starts every registered
-app, and puts the edge on `localhost:8080`.
-
-```mermaid
-flowchart TB
-  DEV["you<br/>localhost:8080<br/><i>?as=krishna@corp.example</i>"] --> EDGE["<b>edge</b><br/>stub SSO · strips client identity<br/>injects the verified one"]
-  EDGE --> W["headcount-dashboard<br/>uvicorn"]
-  SCH["<b>scheduler</b><br/>cron matching, in Python"] --> J["comp-report<br/>runs to completion"]
-  W --> SDK1["insights_sdk broker"]
-  J --> SDK2["insights_sdk broker"]
-  SDK1 --> DB[("<b>SQLite</b><br/>seeded warehouse")]
-  SDK2 --> DB
-  SDK1 --> API["<b>directory stub</b><br/>~40 lines of http.server"]
-  REG[("registry<br/>catalog.yaml · grants.yaml")] -.-> SDK1
-  REG -.-> SDK2
-  SDK1 --> SINK[("runtime/sinks<br/>events · audit")]
-  SDK2 --> SINK
-```
-
-### Everything is fake. The flow is not.
-
-That distinction is the point of the local stack.
-
-| Faked | Real, and running end to end |
-|---|---|
-| The identity provider — `?as=` sets a cookie | Header stripping, identity injection, the edge assertion, `Caller.trusted` |
-| The warehouse — a SQLite file | Dataset entitlement, alias→table resolution, SQL scope checking |
-| The credential — an env var the CLI injects | The app never chooses it, never sees a connection, has no escape hatch |
-| The REST API — 40 lines of stdlib | The same broker, the same audit record, a different adapter |
-| The log sink — a JSONL file | Redaction raising at emit, restricted field-name assertions, the audit schema |
-| The scheduler — cron matching in Python | Service identity, timeout, retries, concurrency, exit-code contract |
-| The grant — a YAML entry | Two-key enforcement, in CI *and* at runtime |
-
-### Things worth trying, because they are the design
-
-```bash
-# 1 · sign in, and read the warehouse through the broker
-open "http://localhost:8080/a/headcount-dashboard/?as=krishna@corp.example"
-
-# 2 · a client cannot assert its own identity — still Krishna
-curl -b cookies.txt -H "X-Auth-Groups: comp-analyst" \
-     http://localhost:8080/a/headcount-dashboard/api/me
-
-# 3 · wrong role → 403, naming the ADR
-#     vidya@corp.example is not a headcount-viewer
-
-# 4 · run the job; watch the audit record and the declared output appear
-cd ../insights-comp-report && uv run insights run
-
-# 5 · evidence a reviewer would be handed
-uv run insights compliance-report --dataset hr.compensation
-```
-
-Add `sales.pipeline` to a query in `src/main.py` and it fails: a real dataset, with real rows,
-that this app never declared.
-
----
-
-## 10 · The production recommendation — AWS + Databricks
-
-> **None of this is built in this repository.** It is the target architecture the
-> local stack is shaped to reach, and the two layers from §2. Every fake above has a
-> named counterpart here, and the seam is one function per concern.
-
-```mermaid
-flowchart TB
-  U["employee"] --> R53["Route 53"] --> ALB["ALB · TLS · OIDC action"]
-  ENTRA["Entra ID"] -.->|"OIDC"| ALB
-  ENTRA -.->|"SCIM: the SAME groups"| DBX
-  APIGW["API Gateway<br/><i>machine-to-machine, when needed</i>"] -.-> ALB
-
-  ALB --> A1["app A · Fargate service<br/>task role A"]
-  ALB --> A2["app B · Fargate service<br/>task role B"]
-  EB["EventBridge Scheduler"] -->|"RunTask"| JOB["job C · Fargate task<br/>task role C"]
-
-  A1 -->|"token exchange<br/><b>as the user</b>"| DBX["<b>Databricks</b><br/>SQL Warehouse + Unity Catalog"]
-  JOB -->|"workload identity federation<br/><b>as the service principal</b>"| DBX
-  DBX --> DELTA[("Delta tables in S3<br/>owners · tags · masks · row filters")]
-  DBX --> UCAUD[("UC system tables<br/>every read, natively")]
-
-  A1 --> PL["internal REST API<br/>via PrivateLink"]
-  A1 & JOB --> CW["CloudWatch Logs + EMF<br/>one log group and one dashboard per app"]
-  A1 & JOB --> FH["Firehose"] --> S3["S3 Object Lock<br/><b>separate account</b>"]
-```
-
-**The elegant part is the dotted line.** Entra is the identity provider for the ALB *and*,
-via SCIM, for Databricks. So `MG-PEOPLE-ANALYTICS` in `app.yaml`, in the ALB's authorization
-and in a Unity Catalog `GRANT` are **the same group**. One identity, three enforcement points,
-no mapping table to drift.
-
-**Network:** three tiers. Public subnets hold the ALB and nothing else. Private app subnets
-hold every tenant task. Private data subnets hold the VPC endpoints and PrivateLink
-interfaces. Databricks is reached over PrivateLink, so warehouse traffic never leaves the
-private network.
-
-**Why ALB and not API Gateway** — the question is worth answering directly, because API
-Gateway is the reflex choice:
-
-| | ALB | API Gateway |
-|---|---|---|
-| Browser SSO | **Native OIDC action** — does the whole login dance | No interactive login; you bolt on Cognito or a Lambda authorizer |
-| Websockets | **Yes** — Streamlit needs them | Separate WebSocket API product |
-| Cost at sustained volume | Lower | Higher per request |
-| Throttling, usage plans, API keys, mTLS | No | **Yes** |
-
-Our traffic is *browsers, authenticated by the corporate IdP*, so ALB wins on the two things
-that matter and API Gateway's strengths are unused. **The trigger to add it:** the first
-machine-to-machine consumer — another system, or an agent calling an app as a tool. That needs
-throttling and per-consumer keys, which is precisely API Gateway's job. It would sit in front
-of the same Fargate services, not replace the ALB (ADR-005).
-
-**Why not EKS** — the same honest answer as everywhere else: Fargate has no nodes, no control
-plane and no add-on lifecycle, and three engineers who also run support should not own a
-Kubernetes upgrade path. **The trigger is written down**: needing workload-level policy
-(OPA/Gatekeeper), a service mesh, or per-tenant NetworkPolicy. At 25 internal analytics apps
-none of those is true. If the organisation already operates EKS as a shared service, that
-changes the arithmetic and this should be reopened — and ADR-005 says so.
-
-**What's shared and what isn't:**
-
-| Shared by everyone | One per app |
-|---|---|
-| VPC, subnets, PrivateLink | ECS service / task definition |
-| ECS cluster | **IAM task role** |
-| ALB and its listener | Security group |
-| Base images | **Its Unity Catalog grants** |
-| The Databricks workspace | CloudWatch log group **and dashboard** |
-| The audit stream (partitioned) | S3 output prefix |
-
-**Break-glass** uses AWS and Databricks primitives rather than our honour: a platform engineer
-needing tenant rows gets a **Unity Catalog grant from the data owner**, time-boxed, recorded in
-UC's own audit — which the platform team cannot edit — with an EventBridge rule notifying the
-tenant.
-
-## 11 · Local ↔ production — the seams
-
-Every local fake, the one thing that replaces it, and **the exact place the code changes**.
-The last column is the honest measure of whether the recommendation is reachable.
-
-| Concern | Local (runs today) | Production (recommended) | Where the code changes |
+| Concern | Local | Production | Changes in `src/` |
 |---|---|---|---|
-| Sign-in | `?as=` sets a cookie | ALB OIDC action → Entra ID | `edge/main.py` — verify a signed JWT instead of reading a cookie |
-| Identity into the app | edge injects headers + a shared token | ALB injects `x-amzn-oidc-data` | `identity.from_headers()` — verify a signature; **everything downstream unchanged** |
-| App authorization | manifest roles → groups | same, from Entra via SCIM | nothing |
-| Warehouse | SQLite file | Databricks SQL Warehouse | `adapters.py` — one adapter class |
-| Data governance | broker applies `local_masking` | **Unity Catalog** masks and row filters | `data._mask()` returns early; UC does it |
-| Data credential | env var the CLI injects | **OAuth federation — no stored secret** | `adapters.py` — token exchange or workload identity |
-| Who the data platform sees | the app | **the signed-in person** | `adapters.py` — the same function |
-| Internal REST API | stdlib stub | the real service via PrivateLink | base URL, from the registry |
-| Deployment | `uv run insights up` | GitHub OIDC → ECR → ECS | the reusable workflow |
-| Scheduling | Python cron matcher | EventBridge Scheduler → ECS RunTask | `runtime/scheduler/` — replaced, not adapted |
-| Logs & metrics | JSONL to `runtime/sinks/` | CloudWatch Logs + EMF | nothing — stdout either way |
-| Data audit | our JSONL file | **UC `system.access.audit`** + our correlation record | `compliance-report` reads two sources instead of one |
+| Sign-in | `?as=` stub | ALB OIDC | nothing |
+| Identity to the app | `X-Auth-*` from the local edge | `X-Auth-*` from the gateway | nothing |
+| Connections | sqlite + a REST stub | Databricks SQL, Redshift, internal APIs | nothing |
+| Secrets | a file per secret | Secrets Manager, IAM-scoped per app | nothing |
+| Scheduling | Python cron matcher + SQLite | EventBridge → RunTask / CronJob | nothing |
+| Telemetry | JSONL on disk | stdout → CloudWatch → observability | nothing |
 
-> **The line that matters:** *no tenant code appears in the right-hand column.* An app never
-> learns whether it is talking to SQLite or Databricks, because it never named a table — it
-> named `hr.headcount`.
+**Networking, briefly.** An ALB terminates TLS and does native OIDC, which is why it is
+the front door rather than API Gateway — API Gateway has no interactive login. Its
+~100-rules-per-load-balancer quota breaks somewhere around 300 apps, so routing moves
+into the cluster (Ingress or a Gateway API HTTPRoute) and the ALB becomes one target.
+NLB appears only where PrivateLink or static IPs are required.
 
-**What is honestly weaker locally**, said plainly rather than left to be discovered:
-
-- SQLite has no users and no `GRANT`s, so the local masking is *our* code rather than the
-  database's. The behaviour a developer sees matches production; the **enforcer** does not.
-  Governance is only exactly right against a real workspace.
-- The local IdP is a cookie, not OIDC. The trust *boundary* is real — headers are stripped,
-  the assertion is checked, an app outside the edge reads nothing — but the signature
-  verification in §6.1 is the production path, not the local one.
-- There is one environment. dev/uat/prod promotion exists in the workflows and the manifest,
-  and is not exercised.
+**On M2M, precisely:** Databricks workload identity federation consumes an **OIDC**
+token. Kubernetes projects one (IRSA / Pod Identity); an ECS task role is IAM/SigV4 and
+does not. So "no stored credential" is fully true on EKS and only mostly true on
+Fargate, where a broker exchange is needed. That asymmetry is a documented EKS trigger
+in [ADR-005](adr/0005-deliberate-omissions-and-triggers.md).
 
 ---
 
-## Where to go next
+## 12 · What this platform is not
 
-| | |
-|---|---|
-| Day one as a new team | [`../ONBOARDING.md`](../ONBOARDING.md) |
-| Why any of this was chosen | [`adr/`](adr/) — five decision records |
-| What was deliberately left out | [ADR-005](adr/0005-deliberate-omissions-and-triggers.md) |
-| For a compliance reviewer | [`../COMPLIANCE.md`](../COMPLIANCE.md) |
+Each named with the trigger that would change our minds, in
+[ADR-005](adr/0005-deliberate-omissions-and-triggers.md).
+
+- **Not a data catalog.** No search, no schema browser, no lineage. Discovery belongs
+  in the data platform, governed by the same grants.
+- **Not a governance layer.** Unity Catalog owns owners, tags, grants, column masks and
+  row filters — enforced on every path, including a notebook.
+- **Not a portal.** The console is read-only; the CLI is the interface.
+- **Not multi-language.** Python only. A second runtime doubles the base of everything
+  above, for a team of three.
+- **Not hard isolation.** Apps share a cluster and a control plane. The boundary is the
+  credential and the identity, not the kernel — and we say so rather than implying more.
+
+---
+
+## Reading order
+
+1. This page
+2. [ADR-001](adr/0001-platform-shape-and-reuse-strategy.md) — SDK vs service, and the upgrade story
+3. [ADR-002](adr/0002-tenant-isolation-and-data-access.md) — connectors, secrets, and what isolation means here
+4. [ADR-003](adr/0003-operator-access-and-tenant-data.md) — what the platform team can see
+5. [ADR-004](adr/0004-enforcement-and-platform-rules.md) — where each rule is enforced
+6. [ADR-005](adr/0005-deliberate-omissions-and-triggers.md) — what we left out, and when to revisit
+7. [ONBOARDING.md](../ONBOARDING.md) — day one for a new team
+8. [RUNBOOK.md](../RUNBOOK.md) — day two for us

@@ -139,11 +139,9 @@ access:
       groups: [MG-DEMAND-PLANNING]
 
 runtime:
-  sdk: ">=0.1,<1"              # a floor, not a pin
-  base: python-web             # `insights runtimes` lists them. We patch these
-  size: small
+  size: small                  # small | medium | large -> cpu/memory/replicas
 
-data: []                       # dataset names; `insights datasets` shows what you can ask for
+connections: []                # what you talk to. Filled in below
 
 web:
   route: /forecast-dashboard
@@ -155,16 +153,19 @@ environments:
   prod: {auto_deploy: false, approvers: owners}
 ```
 
-**The two `access` blocks answer different questions, and keeping them apart matters.**
-`manage` is *who can deploy and govern this app*. `roles` is *who can use it*. An engineer who
-can ship to uat is not thereby allowed to read what the app reads, and a person allowed to view
-the dashboard cannot deploy it. Mixing those two is the most common way an internal platform
-quietly leaks.
+**Three tiers, and there is no fourth.** They nest: an owner satisfies every check a
+contributor does, and a contributor every check a reader does — so nobody is listed
+twice, and nobody is locked out because somebody forgot to.
 
-You declare *what you need*. We decide *how it's satisfied* — which engine, which
-credential, which physical table in which environment. That's why there's nothing in
-there resembling a connection string, and why the manifest loader will reject one if you
-add it.
+There used to be a second `access.roles` block where an app defined its own named
+roles. It was removed: two authorization vocabularies in one file meant every reader
+had to work out which one a given check used, and in practice apps' roles restated
+these three. The loader now refuses it rather than ignoring it.
+
+You will also notice there is no `runtime.sdk` and no `runtime.base`. Both were second
+copies of something stated elsewhere — `pyproject.toml` pins the SDK, your Dockerfile's
+`FROM` names the base — and a second copy drifts. Both are refused, with a message
+saying where the real one lives.
 
 ---
 
@@ -178,139 +179,91 @@ from insights_sdk import current_user, require_role, web_app
 
 app = web_app()
 
-@app.get("/")
-def index():
+@app.get("/api/me")
+def me():
     return {"you": current_user().subject, "groups": list(current_user().groups)}
 
-@app.get("/forecast")
+@app.get("/api/forecast")
 def forecast():
-    require_role("forecast-viewer")      # raises → the caller gets a 403
+    require_role("reader")      # raises → the caller gets a 403
     ...
 ```
 
 **Two layers of authorization**, and the difference matters:
 
-| Layer | Question | Where it comes from |
+| Layer | Question | Where it is checked |
 |---|---|---|
-| Can they reach the app at all? | is this person in **any** group this app declared? | checked at the edge, before your code runs |
-| Can they do *this*? | `require_role("forecast-viewer")` | `access.roles` in your manifest |
-| Can the **app** read this data? | is the dataset declared, and granted by its owner? | your manifest **and** the data owner |
+| Can they reach the app at all? | are they in **any** group this app lists? | the edge, before your code runs |
+| Can they do *this*? | `require_role("owner" \| "contributor" \| "reader")` | your code, against `access.manage` |
 
-Add a role to `access.roles` and the platform reconciles the corporate groups behind it at
-deploy time. You don't create groups by hand and you don't check membership by hand.
-
-The third row is worth reading twice: it is about the **app**, not the person. Someone with
-every permission in the company still gets nothing from an app that never declared the
-dataset.
+The first layer is why someone with no business in your app never runs a line of it.
 
 **One thing worth knowing**, because it will confuse you exactly once: if you run your
-app directly with `python main.py`, every authorization check fails. That's not a bug.
-Identity is only believed when the platform edge asserts it, so an app running without
-the edge in front of it has a caller with no groups — deliberately, because the
-alternative is an app that behaves differently in production than on your laptop in the
-one area where that's dangerous. Use `insights run`.
+app directly with `python main.py`, every authorization check fails, and so does
+`connect()`. That is not a bug. Identity is only believed when the platform edge
+asserts it, so an app running without the edge has a caller with no groups —
+deliberately, because the alternative is an app that behaves differently in production
+than on your laptop, in the one area where that is dangerous. Use `insights run` or
+`insights up`.
 
 ---
 
-## 3 · Get data (2 minutes, plus approval)
+## 3 · Connect to your data (5 minutes)
 
-**See what exists:**
+**You already have access to your data.** The platform is not in that loop and does not
+want to be — there is no catalog here, no entitlement to request from us, and no
+approval queue. What we give you is the connector, somewhere safe for the credential,
+and an error message that says who has to fix it.
 
-```bash
-insights datasets
-```
-
-```
-datasets for forecast-dashboard
-
-  ENTITLED
-    (none yet)
-
-  AVAILABLE TO REQUEST  (ask the owner — the platform does not decide this)
-    hr.headcount           internal     MG-PEOPLE-OPS
-                           Headcount by department and month. Aggregate, no individuals.
-    sales.pipeline         internal     MG-SALES-OPS
-                           Open opportunities by region.
-```
-
-A name, an owner, one line of description. That's on purpose — this is an access
-registry, not a data catalog. If you want to know what's *in* a dataset, talk to the
-owner. That conversation is where they find out who's using their data and why, and
-it's worth more than a schema browser.
-
-**Declare what you need:**
+Declare the connection:
 
 ```yaml
-data:
-  - dataset: sales.pipeline
-    access: read
+connections:
+  - name: hr-warehouse
+    engine: databricks-sql      # databricks-sql | redshift | postgres | rest | sqlite
+    host: ${HR_WAREHOUSE_HOST}  # ${VAR} so one manifest works in every environment
+    http_path: /sql/1.0/warehouses/abc123
+    secret: hr-warehouse-token  # a NAME. Never a value
 ```
 
-**Then read it:**
+Put the value in the secret store, not in the file:
+
+```
+insights/forecast-dashboard/hr-warehouse-token
+```
+
+| | |
+|---|---|
+| writes the value | **your group** |
+| reads the value | `sp-forecast-dashboard` — your app's identity, on its own prefix |
+| **cannot** read it | the platform team, by an explicit IAM Deny that no Allow overrides |
+| sees every read | CloudTrail, including ours |
+
+`app.yaml` is in git, so a password typed there is a password in the history forever.
+The manifest loader refuses `password`, `token`, `api_key`, `client_secret` and `dsn`
+outright rather than letting you find out later.
+
+Then use it:
 
 ```python
-from insights_sdk import query
+from insights_sdk import connect
 
-rows = query(
-    "sales.pipeline",
-    "SELECT region, SUM(value) AS total FROM sales.pipeline GROUP BY region",
+rows = connect("hr-warehouse").query(
+    "SELECT dept, headcount FROM hr_headcount WHERE month = :month", month="2026-09"
 )
 ```
 
-Write SQL against the **dataset name**. We substitute the physical table for whatever
-environment you're in, so the same query works everywhere and you never learn that the
-production table is called something else. Bind values with `:named` parameters; never
-format them into the string.
+A REST connection is the same shape — `query()` takes a path instead of SQL, and the
+connector adds the bearer token for you.
 
-For REST-backed datasets the verb is `fetch()` — the resource path comes from the
-registry, not from you:
-
-```python
-from insights_sdk import fetch
-people = fetch("directory.people", params={"dept": "Engineering"})
-```
-
-If you call the wrong verb, the error tells you which one to use.
-
-### Getting access — we are not in that loop
-
-The platform does not own the data and cannot grant access to it. What it does is tell you
-**exactly what to ask for, and who to ask**:
+**Check it:**
 
 ```bash
-uv run insights access --reason "quarterly equity review"
+uv run insights connections          # what you declared, and whether the secrets resolve
+uv run insights connections --probe  # actually open each one
 ```
 
-```
-  hr.compensation   owner: MG-PEOPLE-ANALYTICS   not granted
-
-    Send to MG-PEOPLE-ANALYTICS:
-
-      Please grant read access on hr.compensation
-      to the service identity  sp-forecast-dashboard
-      for the app              forecast-dashboard (demand-planning)
-```
-
-Two things are worth understanding here.
-
-**Interactive requests run as you.** When someone opens your app, their own identity reaches
-the data platform, so it applies *their* grants and *their* column masks. If they can read it
-in a notebook, they can read it here; if they cannot, they cannot. You do not manage that.
-
-**Unattended work runs as your app.** A 06:00 job has nobody to inherit access from, so it acts
-as its own service identity — `sp-<your-app>`, derived from your app name. You do not declare
-it and you cannot change it; that is deliberate, because access is granted *to identities*, and
-a team that could name its own could claim another app's.
-
-So for a scheduled job, someone has to grant `sp-<your-app>` in the data platform. `insights
-doctor` checks whether that has happened and fails at your desk rather than at 06:00.
-
-Restricted datasets come with two more things you will notice:
-
-1. Some fields come back as `***`. In production that masking is applied by the data platform
-   itself, per principal, on every path to the data — so a notebook sees the same thing.
-2. Your logs are checked at write time for field names from that dataset, and the logger
-   *raises* if one appears. See §5.
+---
 
 ## 4 · Check it before you push
 
@@ -322,8 +275,9 @@ insights doctor
 insights doctor  (sdk 0.1.0)
 
   ok    manifest app.yaml: forecast-dashboard (web, team demand-planning)
-  ok    dataset sales.pipeline (internal)
-  ok    sdk floor >=0.1,<1 (supported: 0.1.0)
+  ok    connection hr-warehouse (databricks-sql, secret 'hr-warehouse-token' present)
+  ok    Dockerfile on python:3.12-slim, runs as app
+  ok    sdk 0.1.0 (supported: 0.1.0)
 
 no problems
 ```
@@ -338,9 +292,9 @@ insights run        # jobs
 insights up         # the whole local platform, including the edge
 ```
 
-`insights up` starts a stub warehouse, a stub directory API, every registered app and
-the edge on `localhost:8080`. Sign in by adding `?as=krishna@corp.example` to any URL —
-that's the entire local login.
+`insights up` starts a stub warehouse, a stub directory API, a fake secret store, every
+registered app, the console and the edge on `localhost:8080`. Sign in by adding
+`?as=krishna@corp.example` to any URL once — that is the entire local login.
 
 ---
 
@@ -409,7 +363,7 @@ forecast-dashboard      demand-planning     web   0.1.0   2026-09-26T14:02:11Z  
 headcount-dashboard     people-ops          web   0.1.0   2026-09-26T13:58:40Z  ok
 ```
 
-Your app also exposes `/healthz`, which resolves every dataset you declared and confirms
+Your app also exposes `/healthz`, which opens every connection you declared and confirms
 the credentials were injected — so the classic failure, a deploy that starts fine and
 breaks on first use, shows up at the probe instead of in front of a user.
 
@@ -417,7 +371,15 @@ breaks on first use, shows up at the probe instead of in front of a user.
 
 ## Upgrades — what happens when we change something
 
-Your manifest says `sdk: ">=0.1,<1"`. That's a **floor, not a pin**, and it's the deal:
+Your `pyproject.toml` says `insights-sdk>=0.1,<1`. That is a **floor, not a pin**, and
+it is the deal. `uv.lock` pins the exact version you run, so nothing changes underneath
+you — a release reaches you when you re-lock:
+
+```bash
+uv lock --upgrade-package insights-sdk
+uv run insights doctor
+```
+
 
 - **Patches and minors reach you automatically** on your next build. You get fixes and
   new capabilities without doing anything.
@@ -425,13 +387,21 @@ Your manifest says `sdk: ">=0.1,<1"`. That's a **floor, not a pin**, and it's th
 - **When something is going away**, it keeps working and starts telling us you're using
   it. We then come to you with the specific thing to change, not a broadcast email — we
   can see who's affected and what they actually call.
-- **We support the current major and the two before it.** `insights doctor` warns before
-  you fall out of the window.
+- **We support the current major and the two before it.** The deploy gate fails an app
+  outside the window, so you find out at your desk rather than on the day you need to
+  ship something urgent.
 - **A major version is a migration we write with you**, and we don't cut one until the
   telemetry says nobody is still on the removed path.
 
-If you pin an exact version, the manifest loader rejects it. A pinned app is an app we
+If you pin an exact version with `==`, CI rejects it. A pinned app is an app we
 eventually have to break.
+
+Generated files — your pipelines and `RUNBOOK.md` — are refreshed separately:
+
+```bash
+uv run insights upgrade-scaffold --check     # are they current?
+uv run insights upgrade-scaffold             # update, then review the diff
+```
 
 ---
 
@@ -444,6 +414,7 @@ eventually have to break.
 | What's NOT built, and why? | [ADR-005](docs/adr/0005-deliberate-omissions-and-triggers.md) |
 | What can the platform team see? | [ADR-003](docs/adr/0003-operator-access-and-tenant-data.md) — short version: not your data |
 | I have a compliance reviewer | [`COMPLIANCE.md`](COMPLIANCE.md), and `insights compliance-report` |
+| Day-two operations for my app | `RUNBOOK.md`, generated into your own repo |
 
 ## When you get stuck
 
@@ -452,7 +423,8 @@ We're two to three people, so here's an honest triage:
 | Situation | Do this |
 |---|---|
 | `insights doctor` fails | The message says what and usually how. Start there |
-| A dataset is `NOT GRANTED` | Chase the **dataset owner**, not us — we can't approve it |
+| A connection fails with `auth` | Your credential — check the secret's value and expiry |
+| A connection fails with `tls` or `network` | Ours — tell us the host and paste the error |
 | You need a data source we don't support | Talk to us early. It's a platform change, and it's a queue |
 | The platform made something hard that should be easy | That's a bug in the platform, not a thing to work around. Tell us |
 

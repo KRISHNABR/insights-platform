@@ -161,7 +161,7 @@ management chain. That is slower, and it is a deliberate choice rather than an o
 | Every read audited with caller, sensitivity and masked-field count | **built** — `telemetry.audit_read`, written to `runtime/sinks/audit.jsonl`. In production this is the *correlation* record; Unity Catalog's `system.access.audit` is the authoritative one |
 | Zero standing operator access | **built, structurally** — the platform team holds no grants, and the broker's only path to data requires one |
 | The break-glass **data model** — expiry, second approver, tenant notification, usage count | **built** — `control/registry/grants.yaml`, and the report reads it |
-| The break-glass **workflow** — `insights access breakglass request` / `approve` | **not built.** The evidence trail and the schema exist; the command to create an entry does not |
+| A break-glass **workflow** | **not built.** With the broker gone the platform holds no grant to break; operator access to a tenant's data is now a request to that team's data owner, in their own system |
 
 The workflow was the first thing cut when time ran short, and it was the right cut: a fake
 implementation would have looked more finished and been worth less than an honest schema plus
