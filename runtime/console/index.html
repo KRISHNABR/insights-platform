@@ -1,0 +1,148 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Insights Hub — console</title>
+<style>
+  :root { --bg:#0e1116; --panel:#161b22; --line:#2a313a; --text:#e6edf3;
+          --dim:#8b949e; --ok:#3fb950; --warn:#d29922; --bad:#f85149; --accent:#58a6ff; }
+  * { box-sizing: border-box }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace }
+  header { padding:16px 22px; border-bottom:1px solid var(--line); display:flex;
+           align-items:baseline; gap:16px; flex-wrap:wrap }
+  h1 { font-size:15px; margin:0; letter-spacing:.04em }
+  .who { color:var(--dim); font-size:12px }
+  nav { display:flex; gap:2px; padding:0 22px; border-bottom:1px solid var(--line) }
+  nav button { background:none; border:0; border-bottom:2px solid transparent; color:var(--dim);
+               padding:10px 14px; cursor:pointer; font:inherit; font-size:13px }
+  nav button[aria-selected="true"] { color:var(--text); border-bottom-color:var(--accent) }
+  main { padding:22px }
+  table { border-collapse:collapse; width:100%; font-size:13px }
+  th { text-align:left; color:var(--dim); font-weight:400; padding:6px 12px 6px 0;
+       border-bottom:1px solid var(--line); white-space:nowrap }
+  td { padding:7px 12px 7px 0; border-bottom:1px solid #1d232b; vertical-align:top }
+  .ok{color:var(--ok)} .warn{color:var(--warn)} .bad{color:var(--bad)} .dim{color:var(--dim)}
+  .tag { background:var(--panel); border:1px solid var(--line); border-radius:3px;
+         padding:1px 6px; font-size:11px; color:var(--dim); margin-right:4px;
+         display:inline-block }
+  .note { color:var(--dim); font-size:12px; margin:0 0 16px; max-width:70ch }
+  .empty { color:var(--dim); padding:28px 0 }
+  pre { margin:0; white-space:pre-wrap; word-break:break-word; font-size:12px }
+</style>
+
+<header>
+  <h1>INSIGHTS HUB</h1>
+  <span class="who" id="who">…</span>
+</header>
+<nav>
+  <button data-tab="apps" aria-selected="true">Apps</button>
+  <button data-tab="connections">Connections</button>
+  <button data-tab="runs">Runs</button>
+  <button data-tab="logs">Telemetry</button>
+</nav>
+<main id="view"><div class="empty">loading…</div></main>
+
+<script>
+const view = document.getElementById('view');
+const get = (p) => fetch(p).then(r => r.json());
+const esc = (s) => String(s ?? '').replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+const ago = (ts) => {
+  if (!ts) return '<span class="dim">never</span>';
+  const secs = (Date.now() - new Date(ts)) / 1000;
+  if (secs < 90) return Math.round(secs) + 's ago';
+  if (secs < 5400) return Math.round(secs / 60) + 'm ago';
+  return Math.round(secs / 3600) + 'h ago';
+};
+const table = (cols, rows) => rows.length
+  ? `<table><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>${rows.join('')}</table>`
+  : '<div class="empty">nothing recorded yet — run an app first</div>';
+
+const TABS = {
+  async apps() {
+    const apps = await get('api/apps');
+    return `<p class="note">Every registered app. <b>last seen</b> is the newest telemetry
+      record, so an app that has never been called shows nothing — that is not the same
+      as unhealthy.</p>` + table(
+      ['app','kind','team','connections','last seen','recent warn/error'],
+      apps.map(a => `<tr>
+        <td>${esc(a.name)}</td>
+        <td class="dim">${esc(a.kind)}${a.schedule ? ` <span class="tag">${esc(a.schedule)}</span>` : ''}</td>
+        <td class="dim">${esc(a.team)}</td>
+        <td>${a.connections.length
+              ? a.connections.map(c => `<span class="tag">${esc(c.name)} · ${esc(c.engine)}</span>`).join('')
+              : '<span class="dim">—</span>'}</td>
+        <td class="dim">${ago(a.last_seen)}</td>
+        <td class="${a.recent_problems ? 'warn' : 'dim'}">${a.recent_problems || '0'}</td>
+      </tr>`));
+  },
+
+  async connections() {
+    const rows = await get('api/connections');
+    return `<p class="note">The operational question on a platform that ships connectors:
+      which connections are failing, and whose problem is it. <b>auth</b> and
+      <b>not_found</b> are the team's; <b>tls</b> and <b>network</b> are usually ours.
+      Row counts and timings only — the platform never records the SQL or the rows.</p>` + table(
+      ['app','connection','engine','queries','failures','avg ms','rows','kinds','likely owner'],
+      rows.map(c => `<tr>
+        <td>${esc(c.app)}</td><td>${esc(c.connection)}</td>
+        <td class="dim">${esc(c.engine)}</td>
+        <td>${c.queries}</td>
+        <td class="${c.failures ? 'bad' : 'dim'}">${c.failures}</td>
+        <td class="dim">${c.avg_ms ?? '—'}</td>
+        <td class="dim">${c.rows}</td>
+        <td>${Object.entries(c.failure_kinds).map(([k,n]) =>
+              `<span class="tag">${esc(k)} ×${n}</span>`).join('') || '<span class="dim">—</span>'}</td>
+        <td class="${c.likely_owner === 'platform' ? 'warn' : 'dim'}">${c.likely_owner ?? '—'}</td>
+      </tr>`));
+  },
+
+  async runs() {
+    const rows = await get('api/runs');
+    return `<p class="note">Read from the scheduler's own state, not from logs — a run that
+      died before emitting anything still appears here. <b>abandoned</b> means the scheduler
+      restarted while it was in flight.</p>` + table(
+      ['app','scheduled for','run id','started','status'],
+      rows.map(r => `<tr>
+        <td>${esc(r.app)}</td><td class="dim">${esc(r.scheduled_for)}</td>
+        <td class="dim">${esc(r.run_id)}</td><td class="dim">${ago(r.started_at)}</td>
+        <td class="${ {ok:'ok', failed:'bad', abandoned:'warn', running:'dim'}[r.status] }">
+          ${esc(r.status)}${r.exit_code !== null && r.exit_code !== 0 ? ` (exit ${r.exit_code})` : ''}</td>
+      </tr>`));
+  },
+
+  async logs() {
+    const [events, audit] = await Promise.all([
+      get('api/logs?stream=events&limit=60'), get('api/logs?stream=audit&limit=40')]);
+    const all = [...events, ...audit].sort((a,b) => (a.ts||'').localeCompare(b.ts||'')).slice(-80);
+    return `<p class="note">Structured telemetry. Every record carries who, which app and the
+      shape of what happened — never a payload. The SDK's logger raises rather than emit one.</p>`
+      + table(['time','app','caller','event','detail'], all.reverse().map(r => {
+      const common = new Set(['ts','stream','level','event','env','caller','request_id','sdk','app','team']);
+      const extra = Object.entries(r).filter(([k,v]) => !common.has(k) && v !== null)
+                          .map(([k,v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' ');
+      return `<tr>
+        <td class="dim">${esc((r.ts||'').slice(11,19))}</td>
+        <td>${esc(r.app)}</td><td class="dim">${esc(r.caller)}</td>
+        <td class="${ {warn:'warn', error:'bad'}[r.level] || '' }">${esc(r.event)}</td>
+        <td class="dim"><pre>${esc(extra)}</pre></td></tr>`;
+    }));
+  },
+};
+
+async function show(tab) {
+  document.querySelectorAll('nav button').forEach(b =>
+    b.setAttribute('aria-selected', b.dataset.tab === tab));
+  view.innerHTML = '<div class="empty">loading…</div>';
+  try { view.innerHTML = await TABS[tab](); }
+  catch (err) { view.innerHTML = `<div class="empty bad">${esc(err)}</div>`; }
+}
+
+document.querySelectorAll('nav button').forEach(b =>
+  b.addEventListener('click', () => show(b.dataset.tab)));
+
+get('api/me').then(me => {
+  document.getElementById('who').textContent =
+    me.trusted ? `${me.subject} · ${me.groups.join(', ')}` : 'not signed in';
+});
+show('apps');
+setInterval(() => show(document.querySelector('nav button[aria-selected="true"]').dataset.tab), 15000);
+</script>

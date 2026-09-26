@@ -235,6 +235,22 @@ everyone at once, which is the cost of the thin-caller pattern.
 
 ## 5 · Incidents
 
+### Where to look first
+
+```
+insights up                       # the console registers itself at /a/console/
+```
+
+Four views, all read-only, all telemetry and never rows: **Apps** (what exists, last
+seen, recent problems), **Connections** (queries, failures, failure kind, and whether
+it is likely ours or the team's), **Runs** (from the scheduler's own state, so a run
+that died before emitting anything still appears), **Telemetry** (the raw records).
+
+It is a tenant of this platform, not a privileged tool: it sits behind the edge, gets
+the same session cookie and the same group check, and reads `X-Auth-*` exactly as a
+tenant app does. If the edge is broken the console is broken too — which is a better
+bug to have than a console that works when nothing else does.
+
 ### An app is down
 
 Almost always the app, not the platform. Two different questions, two different logs:

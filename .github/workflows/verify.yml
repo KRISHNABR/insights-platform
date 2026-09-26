@@ -63,7 +63,8 @@ jobs:
           # The scheduler's run state. These fail if it ever goes back to being an
           # in-memory dict, which made `concurrency: forbid` and the fire-once-per-
           # minute dedupe true only within one process lifetime.
-          uv run --no-project --with pytest python -m pytest tests/ -q
+          uv run --no-project --with pytest --with fastapi --with httpx --with pyyaml \
+            python -m pytest tests/ -q
 
       # ---- 2 · the manifest gates, on both example apps ----------------------
       - name: insights doctor
