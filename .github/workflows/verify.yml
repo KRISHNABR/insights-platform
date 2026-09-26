@@ -98,6 +98,22 @@ jobs:
           grep -i classification "$RUNNER_TEMP/reject.txt" || true
           cp "$RUNNER_TEMP/app.yaml.bak" app.yaml
 
+      # ---- 3b · a tenant repo must resolve ON ITS OWN ------------------------
+      #
+      # This job clones all four repos side by side, which is the platform team's
+      # layout and NOT a tenant's. A tenant clones only their own repo. A path-based
+      # dependency resolved fine here and failed for every real tenant, so this step
+      # exists to make that impossible to reintroduce.
+      - name: A tenant repo resolves with no sibling checkout
+        run: |
+          rm -rf "$RUNNER_TEMP/lone"
+          mkdir -p "$RUNNER_TEMP/lone"
+          cp -r insights-hub/insights-headcount-dashboard "$RUNNER_TEMP/lone/app"
+          cd "$RUNNER_TEMP/lone/app"
+          ls .. | tee /dev/stderr | grep -qv insights-sdk    # prove there is no sibling SDK
+          uv sync --quiet || { echo "::error::a tenant repo cannot resolve standalone"; uv sync; exit 1; }
+          echo "resolved with no sibling checkout"
+
       # ---- 4 · the scheduled job, end to end ---------------------------------
       - name: Run the scheduled job
         working-directory: insights-hub/insights-comp-report

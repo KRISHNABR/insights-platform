@@ -24,4 +24,12 @@ dependencies = [
 package = false          # a deployable, not a library
 
 [tool.uv.sources]
+# The platform repo keeps a PATH source, unlike tenant repos, and the difference is
+# deliberate. This repo's development loop IS the four-repo workspace - the README
+# tells you to clone all four as siblings - and the platform must be able to run
+# against an SDK change before it is tagged.
+#
+# A tenant repo must never do this: a tenant clones only their own repo, so a path
+# source would resolve for us and for nobody else. Theirs uses a git tag, and in a
+# real organisation an internal package index.
 insights-sdk = { path = "../insights-sdk", editable = true }
