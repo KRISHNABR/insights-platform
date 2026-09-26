@@ -108,6 +108,29 @@ About thirty minutes, most of it waiting for a data owner.
 
 ## 4 · Changing the platform
 
+### Working on the platform and the SDK together
+
+Every repo resolves the SDK from its published `v1` tag, so each one clones and builds
+on its own. When you need the platform to run against an SDK change you have not tagged
+yet, opt in explicitly:
+
+```bash
+cd insights-platform
+uv run --with-editable ../insights-sdk insights status
+```
+
+That overlays your checkout for **one command**, with no state to forget to undo.
+
+Note that `uv pip install -e ../insights-sdk` on its own does **not** work: `uv run`
+re-syncs the project before every command and silently reverts it, so you get the tagged
+SDK while believing you are testing your change. If you want the override to stick for a
+whole session, add `--no-sync` or export `UV_NO_SYNC=1`.
+
+**Do not commit a path dependency to get this.** It resolves on your machine and nowhere
+else, and CI now fails if any repo stops resolving standalone. That check exists because
+a path source shipped once and only broke for people who cloned a single repo — which is
+everyone except us.
+
 ### Releasing a new SDK version
 
 Tenants declare a **floor** (`>=0.1,<1`), so a minor or patch reaches every app on its next

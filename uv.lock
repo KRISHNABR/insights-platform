@@ -130,7 +130,7 @@ dependencies = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.110" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "insights-sdk", editable = "../insights-sdk" },
+    { name = "insights-sdk", git = "https://github.com/KRISHNABR/insights-sdk.git?tag=v1" },
     { name = "packaging", specifier = ">=24.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "uvicorn", specifier = ">=0.27" },
@@ -139,23 +139,13 @@ requires-dist = [
 [[package]]
 name = "insights-sdk"
 version = "0.1.0"
-source = { editable = "../insights-sdk" }
+source = { git = "https://github.com/KRISHNABR/insights-sdk.git?tag=v1#c77bb2058b861f31d93e1893047eb3a0d09f6baa" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "pyyaml" },
     { name = "uvicorn" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", specifier = ">=0.110" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "uvicorn", specifier = ">=0.27" },
-]
-provides-extras = ["dev"]
 
 [[package]]
 name = "packaging"

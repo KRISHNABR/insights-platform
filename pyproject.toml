@@ -1,10 +1,5 @@
 # The platform repo is a uv project so that `uv run insights ...` works here exactly as
 # it does in a tenant repo. One command name everywhere.
-#
-# It depends on the SDK by PATH rather than by version, because the four repos sit side
-# by side during development and the platform should always run against the SDK in the
-# checkout next to it - not a published release that may be older than the code you are
-# editing.
 [project]
 name = "insights-platform"
 version = "0.1.0"
@@ -12,24 +7,41 @@ description = "The Insights Hub platform: runtime, control plane, and the reusab
 requires-python = ">=3.12"
 
 dependencies = [
-  "insights-sdk",        # resolved from the sibling checkout, see [tool.uv.sources]
-  "fastapi>=0.110",      # the edge
+  "insights-sdk>=0.1,<1",   # a FLOOR, not a pin - same contract as a tenant (ADR-001)
+  "fastapi>=0.110",         # the edge
   "uvicorn>=0.27",
-  "httpx>=0.27",         # the edge proxies with it
+  "httpx>=0.27",            # the edge proxies with it
   "pyyaml>=6.0",
-  "packaging>=24.0",     # control/cli/gates.py resolves version ranges
+  "packaging>=24.0",        # control/cli/gates.py resolves version ranges
 ]
 
 [tool.uv]
-package = false          # a deployable, not a library
+package = false             # a deployable, not a library
 
-[tool.uv.sources]
-# The platform repo keeps a PATH source, unlike tenant repos, and the difference is
-# deliberate. This repo's development loop IS the four-repo workspace - the README
-# tells you to clone all four as siblings - and the platform must be able to run
-# against an SDK change before it is tagged.
+# ---------------------------------------------------------------------------
+# WHERE THE SDK COMES FROM
 #
-# A tenant repo must never do this: a tenant clones only their own repo, so a path
-# source would resolve for us and for nobody else. Theirs uses a git tag, and in a
-# real organisation an internal package index.
-insights-sdk = { path = "../insights-sdk", editable = true }
+# Same rule as a tenant repo, and for the same reason: anyone who clones ONLY this
+# repo must be able to `uv sync`. This is the repo the README calls "start here",
+# so a local path here fails for a reviewer before it fails for anyone else.
+#
+# The version range above is the contract. This block only says where to FETCH a
+# version satisfying it. With an internal package index the block is deleted and
+# the index is configured once for everyone; until then the moving `v1` tag stands
+# in - re-locking picks up patches and minors, and a breaking change means v2.
+#
+# DEVELOPING THE PLATFORM AND THE SDK TOGETHER
+# Point at your local checkout explicitly, without editing this file:
+#
+#     uv run --with-editable ../insights-sdk insights status
+#
+# That overlays your checkout for one command, with no state to forget to undo.
+# `uv pip install -e ../insights-sdk` does NOT work on its own: `uv run` re-syncs
+# the project before every command and silently reverts it. If you want it to
+# stick for a session, add `--no-sync` or export UV_NO_SYNC=1.
+#
+# Opt in when you need it, rather than making everyone else's clone depend on your
+# directory layout.
+# ---------------------------------------------------------------------------
+[tool.uv.sources]
+insights-sdk = { git = "https://github.com/KRISHNABR/insights-sdk.git", tag = "v1" }
