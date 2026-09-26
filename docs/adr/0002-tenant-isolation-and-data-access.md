@@ -70,21 +70,23 @@ physical location in this environment, which credential, what classification, wh
 
 Between the call and the rows, the broker runs a fixed sequence:
 
-```text
-query("hr.headcount", sql, **params)
-  │
-  1 load this app's manifest                        (cached at startup)
-  2 ENTITLEMENT  is the dataset declared in app.yaml?      else EntitlementError
-  3 IDENTITY     is the caller trusted?                    else IdentityError
-  4 RESOLVE      alias → engine · physical · classification · owner · credential
-  5 GRANT        if restricted: is there an active grant?  else EntitlementError
-  6 REWRITE      alias → physical name, so tenant SQL is environment-portable
-  7 EXECUTE      via the engine adapter, platform-held credential
-  8 SCOPE        apply masking rules for this caller's roles
-  9 AUDIT        who · app · dataset · classification · rows · duration
-  │
-  └─▶ list[dict]      never a connection, a cursor or a credential
+```mermaid
+flowchart TB
+  Q["query('hr.headcount', sql, **params)"] --> S1["1 · load this app's manifest<br/>cached at startup"]
+  S1 --> S2{"2 · ENTITLEMENT<br/>declared in app.yaml?"}
+  S2 -->|"no"| X1(["EntitlementError"])
+  S2 -->|"yes"| S3{"3 · IDENTITY<br/>is the caller trusted?"}
+  S3 -->|"no"| X2(["IdentityError"])
+  S3 -->|"yes"| S4["4 · RESOLVE<br/>alias to engine · physical location<br/>classification · owner · credential"]
+  S4 --> S5{"5 · GRANT<br/>if restricted, is there an active grant?"}
+  S5 -->|"no"| X3(["EntitlementError"])
+  S5 -->|"yes, or not restricted"| S6["6 · REWRITE<br/>alias to physical name, so tenant SQL<br/>is environment-portable"]
+  S6 --> S7["7 · EXECUTE<br/>engine adapter, platform-held credential"]
+  S7 --> S8["8 · SCOPE<br/>masking rules for this caller's roles"]
+  S8 --> S9["9 · AUDIT<br/>who · app · dataset · classification<br/>rows · duration"]
+  S9 --> OUT(["list[dict]<br/>never a connection, a cursor or a credential"])
 ```
+
 
 Steps 2, 5, 8 and 9 are only enforceable **because there is exactly one code path to the data.**
 Hand out a connection and every one of them becomes advisory.

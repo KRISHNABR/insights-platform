@@ -9,6 +9,41 @@ and everything is indexed from here.
 
 ---
 
+## The whole thing in one picture
+
+```mermaid
+flowchart TB
+  subgraph T["What a tenant team owns"]
+    direction LR
+    A1["insights-headcount-dashboard<br/>src/ + app.yaml<br/><i>a web app</i>"]
+    A2["insights-comp-report<br/>src/ + app.yaml<br/><i>a scheduled job</i>"]
+  end
+
+  A1 & A2 -->|"depend on"| SDK["<b>insights-sdk</b><br/>library + insights CLI + scaffolds<br/><i>the only thing tenants install</i>"]
+  A1 & A2 -->|"4-line ci.yml calls"| WF["<b>insights-platform</b><br/>one reusable deploy workflow"]
+
+  SDK --> BRK["the data broker<br/>query() · fetch()<br/><i>one path to data, no escape hatch</i>"]
+  WF --> REG[("control/registry<br/>catalog · grants · apps")]
+  REG -.->|"resolves dataset names to<br/>engine · location · credential · classification"| BRK
+
+  BRK --> CONN[("shared connections<br/>warehouse · internal REST API")]
+  BRK --> AUD[("audit + events")]
+
+  EDGE["runtime/edge<br/><i>strips client identity,<br/>injects validated identity</i>"] --> A1
+  SCH["runtime/scheduler<br/><i>reads the registry's cron</i>"] --> A2
+```
+
+**Read it as one sentence:** *a team writes app code and an `app.yaml`, depends on the SDK,
+and calls one platform workflow — and in return gets identity, data access, deployment and
+observability without writing any of them.*
+
+The one decision everything else rests on is in that diagram: **tenants never get a
+connection.** They name a dataset; the platform performs the read. That's what makes
+entitlement, masking and audit enforceable rather than advisory
+([ADR-002](docs/adr/0002-tenant-isolation-and-data-access.md)).
+
+---
+
 ## Read this in ten minutes
 
 | If you have | Read |

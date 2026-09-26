@@ -7,58 +7,77 @@ go argue with whichever ADR you disagree with.*
 
 ---
 
-## Everything traces back to three sentences in the brief
+## Everything traces back to the brief's context section
 
-Almost every decision in this design is downstream of three facts we were given. Where they
-conflict, the ADRs say which one won and why.
+The brief said those bullets were "not flavor text" and that the design would be evaluated
+against them. So here is every one, and what it forced. Three are **forces** that shape
+decisions; three are **requirements** that had to be delivered.
 
-| The fact | What it licenses | Mostly drives |
-|---|---|---|
-| *"The platform team is **2–3 engineers**, who also maintain, upgrade, and support everything they build."* | Ruthless restraint. Every component is something to patch and be paged for | ADR-001, ADR-004, ADR-005 |
-| *"Every tenant is a **team of employees**… you have observability and **organisational recourse**."* | Threat model is **accident, not attack** — so share infrastructure aggressively | ADR-002 |
-| *"**People Analytics**… compensation data… their **compliance partner will review** your design."* | The counterweight. Forces least privilege and **evidence** for one dataset | ADR-002, ADR-003 |
+| # | What the brief said | What it forced | Lands in |
+|---|---|---|---|
+| 1 | *"The platform team is **2–3 engineers**, who also maintain, upgrade, and support everything they build."* | **Force.** Ruthless restraint — every component is something to patch and be paged for | ADR-001, ADR-004, ADR-005 |
+| 2 | *"Every tenant is a **team of employees**… observability into what runs, and **organisational recourse**."* | **Force.** Threat model is **accident, not attack** → share infrastructure aggressively | ADR-002 |
+| 3 | *"**~5 consuming teams today, plausibly ~25 in two years.**"* | **Force.** Must work at 25 without 5× the platform effort — which rules out anything per-tenant | ADR-002, ADR-005 |
+| 4 | *"Apps share common needs… **authN/authZ**, **shared data connections** (a warehouse, an internal REST API), a **deployment story**, and a **baseline of observability**."* | **Requirement.** The four things the substrate must actually provide — see the table below | all five |
+| 5 | *"**Teams vary.** Some will ship interactive CRUD web apps; others, scheduled batch jobs."* | **Requirement.** Two archetypes that must not become two platforms | ADR-001 |
+| 6 | *"**People Analytics**… compensation data… their **compliance partner will review** your design before they onboard."* | **Force, and the counterweight.** Least privilege and **evidence** for one dataset | ADR-002, ADR-003 |
 
-The first two point at *share everything and keep it small*. The third pulls the other way. The
-interesting parts of this design are where that collision gets resolved.
+Forces 1, 2 and 3 all point the same way — *share everything, keep it small*. Force 6 pulls hard
+the other way. **The interesting parts of this design are where that collision gets resolved**,
+and requirement 4 is where it gets resolved most sharply, because shared data connections are
+exactly what compensation data cannot afford to share naively.
 
 ## The system in one page
 
 **The tenant contract:** *you write your app logic and an `app.yaml`. Everything else is
 inherited.*
 
-```text
-DEPLOY PATH  -- how a tenant ships
-────────────────────────────────────────────────────────────────────────────────
-  tenant repo ──push──▶ .github/ci.yml ──calls──▶ insights-platform
-   src/                 (4 lines)                  .github/workflows/deploy.yml
-   app.yaml                                              │
-   .github/ci.yml                                        ├─ validate app.yaml vs schema
-                                                         ├─ check datasets vs catalog
-                                                         │    (entitlement: declared?)
-                                                         ├─ check SDK floor is supported
-                                                         ├─ build on platform base image
-                                                         └─ register ──▶ control/registry
-                                                                              │
-                                                                     insights status
-                                                                     + status view
+**Deploying — how a tenant ships.**
 
+```mermaid
+flowchart TB
+  subgraph TENANT["Tenant repo — the only files you own"]
+    direction LR
+    SRC["src/"] ~~~ MAN["app.yaml"] ~~~ CI["·github/workflows/ci.yml<br/>4 lines, generated"]
+  end
+  TENANT -->|"push"| CI2["ci.yml calls the platform workflow<br/><code>uses: insights-platform/.github/workflows/deploy.yml@v1</code>"]
+  CI2 --> GATE
 
-RUNTIME PATH  -- how a request is served
-────────────────────────────────────────────────────────────────────────────────
-  user ──▶ runtime/edge ────────▶ tenant app ──▶ insights_sdk.data.query("hr.headcount")
-            strips client          (container)            │
-            X-User-* headers                              ├─ catalog:     alias → engine,
-            injects validated                             │               env, credentials
-            identity                                      ├─ entitlement: declared in app.yaml?
-                                                          ├─ scope:       per calling user
-                                                          └─ audit ──────▶ runtime/sinks
-                                                                                │
-  cron ──▶ runtime/scheduler ───▶ tenant job ──▶ (same SDK path) ───────────────┘
+  subgraph GATE["Platform workflow — everything you inherit"]
+    direction TB
+    V1["validate app.yaml against the schema"]
+    V2["every declared dataset exists in the registry"]
+    V3["every restricted dataset has an owner's grant"]
+    V4["SDK floor is inside the support window"]
+    V5["no secrets · no :latest · tests pass"]
+    V6["build FROM the platform base image"]
+    V1 --> V2 --> V3 --> V4 --> V5 --> V6
+  end
 
-
-  The tenant writes:  src/  +  app.yaml  +  a 4-line CI caller.
-  Everything else in both diagrams is inherited.
+  GATE --> REG[("control/registry<br/>register app · kind · schedule · sdk")]
+  REG --> WEB["kind: web<br/>runs as a service behind the edge"]
+  REG --> JOB["kind: job<br/>run by the platform scheduler"]
+  REG --> ST["insights status"]
 ```
+
+
+**Serving — how a request is answered.**
+
+```mermaid
+flowchart LR
+  U["employee"] --> E["runtime/edge<br/>strip client identity<br/>inject validated identity"]
+  C["platform scheduler<br/>cron from the registry"] --> J["tenant job<br/>container"]
+  E --> W["tenant web app<br/>container"]
+  W --> SDK["insights_sdk broker<br/>query() / fetch()"]
+  J --> SDK
+  REG[("control/registry<br/>catalog + grants")] -.->|"resolve alias"| SDK
+  SDK --> DATA[("shared connections<br/>warehouse · internal REST API")]
+  SDK --> SINK[("runtime/sinks<br/>events + audit")]
+```
+
+> **The tenant writes `src/`, `app.yaml`, and a four-line CI caller. Everything else in both
+> diagrams is inherited.**
+
 
 **Four repositories:**
 
@@ -102,21 +121,24 @@ Everything else in this document is context for these two.
 
 ### Identity — why an app outside the edge can read nothing
 
-```text
-  browser ──▶ runtime/edge ─────────────────────▶ tenant app
-              │                                   │
-              │ 1. STRIP every inbound            │ insights_sdk.identity.from_headers()
-              │    X-Auth-* header                │   • is the edge token present and correct?
-              │    (a client cannot assert        │        no  ──▶ Caller.anonymous()
-              │     its own identity)             │                 trusted = False
-              │ 2. resolve the session            │        yes ──▶ Caller(subject, groups,
-              │ 3. RE-INJECT validated            │                        trusted=True)
-              │    X-Auth-User                    │
-              │    X-Auth-Groups                  │  Caller.groups is a PROPERTY that returns
-              │    X-Auth-Request-Id              │  () unless trusted — so every authorization
-              │    X-Auth-Edge-Token              │  check fails closed structurally, with no
-              └───────────────────────────────────┘  code anywhere having to remember a flag.
+```mermaid
+flowchart TB
+  B["browser"] --> E
+  subgraph E["runtime/edge — the only thing that may assert identity"]
+    direction TB
+    E1["1 · STRIP every inbound X-Auth-* header<br/><i>a client cannot assert its own identity</i>"]
+    E2["2 · resolve the session against the IdP"]
+    E3["3 · RE-INJECT X-Auth-User · Groups · Request-Id<br/>+ an assertion proving this is the edge"]
+    E1 --> E2 --> E3
+  end
+  E3 --> F{"identity.from_headers()<br/>edge assertion valid?"}
+  F -->|"no"| N["Caller.anonymous()<br/>trusted = False"]
+  F -->|"yes"| Y["Caller(subject, groups)<br/>trusted = True"]
+  N --> G["Caller.groups is a PROPERTY<br/>returning () unless trusted"]
+  Y --> G
+  G --> R["every authorization check fails closed<br/>structurally — no code has to remember a flag"]
 ```
+
 
 A scheduled job has no interactive caller, so the scheduler constructs
 `Caller.service("svc:comp-report", groups=<manifest owners>)` — trusted, because the platform and
@@ -132,23 +154,25 @@ The registry has two levels, and the distinction carries most of the design:
 | **connection** | a shared source the platform operates — one warehouse, one internal REST API | never | **no** |
 | **dataset** | a named thing *inside* a connection, with an owner and a classification | yes, in `app.yaml` | yes — the unit of entitlement |
 
-```text
-  query("hr.headcount", "SELECT dept, headcount FROM hr.headcount WHERE month = :month", ...)
-    │
-    1  manifest            this app's app.yaml, cached at startup
-    2  ENTITLEMENT         declared in app.yaml?            no ─▶ EntitlementError
-    3  IDENTITY            trusted caller?                  no ─▶ IdentityError
-    4  RESOLVE             alias ─▶ connection · engine · location(env) · classification · owner
-    5  GRANT               restricted? active grant?        no ─▶ EntitlementError
-                           …and register its sensitive field names with the logger
-    6  REWRITE + SCOPE     alias ─▶ physical table, and reject SQL that reaches for
-                           any dataset this app did not declare
-    7  EXECUTE             engine adapter, platform-held credential
-    8  MASK                fields this caller's roles may not see
-    9  AUDIT               who · app · dataset · classification · rows · ms · masked count
-    │
-    └─▶ list[dict]         never a connection, a cursor or a credential
+```mermaid
+flowchart TB
+  Q["query('hr.headcount', sql, month=...)"] --> S1["1 · manifest<br/>cached at startup"]
+  S1 --> S2{"2 · ENTITLEMENT<br/>declared in app.yaml?"}
+  S2 -->|"no"| X1(["EntitlementError"])
+  S2 -->|"yes"| S3{"3 · IDENTITY<br/>trusted caller?"}
+  S3 -->|"no"| X2(["IdentityError"])
+  S3 -->|"yes"| S4["4 · RESOLVE<br/>connection · engine · location(env)<br/>classification · owner"]
+  S4 --> S5{"5 · GRANT<br/>restricted, and granted?"}
+  S5 -->|"restricted, no grant"| X3(["EntitlementError"])
+  S5 -->|"granted"| S5b["register its sensitive field names<br/>with the logger"]
+  S5 -->|"not restricted"| S6
+  S5b --> S6["6 · REWRITE + SCOPE<br/>alias to physical table, and reject SQL<br/>reaching any undeclared dataset"]
+  S6 --> S7["7 · EXECUTE<br/>engine adapter, platform-held credential"]
+  S7 --> S8["8 · MASK<br/>fields this caller's roles may not see"]
+  S8 --> S9["9 · AUDIT<br/>who · app · dataset · classification<br/>rows · ms · masked count"]
+  S9 --> OUT(["list[dict]<br/>never a connection, cursor or credential"])
 ```
+
 
 Steps 2, 5, 6, 8 and 9 are only enforceable because there is exactly **one** code path to data.
 That is the reason the platform brokers reads instead of handing out connections, and it is the
