@@ -136,3 +136,12 @@ reviewers.
 
 **Rules accumulating in documentation.** Every time we write "remember to…" in a doc instead of
 enforcing it, we have lost a little. That count is the health metric for this ADR.
+
+## Revisit when
+
+* **"Remember to…" appears in a document instead of a control.** That count is the health metric
+  for this ADR: every instance is a rule that belongs one layer earlier.
+* **The manifest-review queue stops fitting three people**, at roughly twenty-five tenants. The
+  answer is to move policy into data — alternative B — not to add reviewers.
+* **Per-tenant exceptions start accumulating in CI as special cases.** Same signal, arriving from
+  the other direction.

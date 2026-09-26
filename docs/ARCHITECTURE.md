@@ -154,6 +154,32 @@ Steps 2, 5, 6, 8 and 9 are only enforceable because there is exactly **one** cod
 That is the reason the platform brokers reads instead of handing out connections, and it is the
 single decision the rest of the design rests on ([ADR-002](adr/ADR-002-shared-data-and-isolation.md)).
 
+### The two archetypes, and why they are not two platforms
+
+*"Teams vary. Some will ship interactive CRUD web apps; others, scheduled batch jobs."* The
+cheapest way to satisfy that sentence is two parallel paths. We deliberately built one.
+
+| | `kind: web` | `kind: job` |
+|---|---|---|
+| Tenant writes | request handlers | a `main()` |
+| Tenant calls | `web_app()` | `run_job(main)` |
+| Identity | per request, from the edge | per run, a service caller the scheduler constructs |
+| Started by | the runtime, on a port | `runtime/scheduler`, from the registry + a cron line |
+| Gets for free | routing, sign-in, request ids, access logs, `/healthz` | a run id, start/finish telemetry, SIGTERM draining, an exit-code contract |
+
+**What is identical:** the SDK, the data broker, the telemetry rules, the base image, the
+Dockerfile, the CI workflow, and the entrypoint. `kind` selects a branch in one
+`entrypoint.sh`, so the two archetypes cannot drift apart — and a team that needs both writes
+two manifests rather than learning two platforms.
+
+**What makes `kind` real rather than decorative:** a job must declare a `schedule` and a web app
+must not. The manifest loader rejects either mistake. Jobs are never deployed as services; the
+registry records the schedule and the platform runs them.
+
+The one genuinely different question is the one above: a scheduled run has no human, so its
+identity and its masking roles had to be answered separately — see
+[ADR-002 §3](adr/ADR-002-shared-data-and-isolation.md).
+
 ## Where the brief's four shared needs are answered
 
 The brief names four things apps share. None of them is answered only by code.

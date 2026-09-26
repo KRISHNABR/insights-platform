@@ -16,3 +16,20 @@ answers which question — read [`../ARCHITECTURE.md`](../ARCHITECTURE.md) first
 
 **Suggested order:** ADR-002 → ADR-003 → ADR-001 → ADR-004 → ADR-005. Two and three are where the
 design is most exposed and most deliberate.
+
+## The shape each one follows
+
+Every record has the same six sections, so they can be read in any order and compared against
+each other:
+
+| Section | What it is for |
+|---|---|
+| **Context** | the facts from the environment that forced a decision, quoted rather than paraphrased |
+| **Decision** | what we did |
+| **The tension** | the two legitimate goals that pulled against each other. If an ADR has no tension, it was not a decision — it was a preference, and it does not belong here |
+| **Alternatives considered** | what we rejected and *why not*, including the one with the strongest case |
+| **Consequences** | what we now have to do, what gets harder, and what we accept |
+| **Revisit when** | the specific signals that would make this decision wrong. A decision without a written expiry condition quietly becomes a convention |
+
+The last two are the ones worth arguing with. An ADR that only lists benefits has not been
+thought through.

@@ -363,3 +363,17 @@ periodic access review. Neither is built. Both are correct asks, and both sit in
 list rather than being quietly omitted. What we *can* hand them today is
 `insights compliance-report --dataset hr.compensation`: who is entitled, who granted it, every
 read in the period, and every break-glass event.
+
+## Revisit when
+
+* **A tenant is not a team of employees** — a contractor team, a joint venture, an acquired
+  company under a separate legal entity. This removes the organisational-recourse premise the
+  whole ADR rests on, and it must be reopened rather than stretched.
+* **A governed enterprise data platform arrives.** Our registry should stop being authoritative
+  and become a cache (§6), and per-user passthrough stops being a programme (§3).
+* **"Can the platform add X" becomes a stream rather than a trickle.** The narrow API is then
+  wrong, and the answer is alternative C — a data service other languages can reach — not an
+  escape hatch.
+* **Someone proposes a third tier.** Two is the maximum this model should carry; a third means
+  the tiering dimension itself is wrong.
+* A regulatory obligation names physical or network separation.

@@ -140,3 +140,15 @@ them in.
   failing and the answer is either stronger CI enforcement of the floor or a move toward
   alternative B.
 * Time between a deprecation being announced and the last tenant migrating.
+
+## Revisit when
+
+* **More than three distinct SDK versions persist in production.** The model is then failing in
+  the way it is designed to fail — visibly. The answer is either stronger CI enforcement of the
+  floor, or moving to alternative B, the runtime platform service.
+* **A deprecation announced two release cycles ago still has users.** Mechanism 4 exists so
+  removal is evidenced; if the evidence is being ignored, majors are unsafe to cut and the
+  support window is fiction.
+* **Cross-cutting change latency becomes the thing blocking the roadmap** rather than an
+  acceptable cost. That is the monorepo trade reasserting itself, and it deserves a fresh
+  argument rather than a reflex.

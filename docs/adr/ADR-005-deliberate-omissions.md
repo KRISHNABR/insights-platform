@@ -218,3 +218,16 @@ and ADR-004's response-time commitment is how we pay it.
 Omissions justified by team size age badly. If the platform team grows to six and these are still
 absent, the reason will have quietly become inertia rather than judgement. Each trigger above is
 written to be checkable for exactly that reason — they are falsifiable claims, not preferences.
+
+## Revisit when
+
+Each omission above carries its own trigger. This ADR **as a whole** should be reopened when:
+
+* **The platform team grows past three people.** Almost every omission here is justified by who
+  has to operate it. That justification ages badly and quietly, and nobody is assigned to notice.
+* **Tenant count passes roughly twelve.** Several of these decisions were sized for five teams
+  and argued as safe up to twenty-five. Twelve is where the assumption should be re-tested rather
+  than assumed to still hold.
+* **Two or more triggers fire in the same quarter.** That is a signal the environment has moved,
+  not that individual omissions were wrong — and the right response is to re-argue the set, not
+  to work through them one at a time.

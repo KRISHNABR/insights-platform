@@ -169,3 +169,17 @@ this paragraph. What it costs today is that an operator needing emergency access
 owner hand-edit `grants.yaml` — which is auditable, and slow, and exactly the friction the
 control is supposed to create. It is the first thing to build after the items in the README's
 "what I'd do next".
+
+## Revisit when
+
+* **Break-glass becomes routine.** One of two things is then true: the telemetry is inadequate
+  for operating the platform, or the control is theatre. Either way it means redesign, not
+  tolerance.
+* **Misuse of a platform-held credential would be a reportable event rather than an internal
+  one.** That is the trigger to move the broker into a sidecar, so the tenant process stops
+  holding the credential at all.
+* **Attempts to log payloads stop declining.** The SDK catches them, so they are never incidents
+  — but a flat or rising count means the ergonomics or the documentation are wrong, not that
+  people are careless.
+* An approver being unreachable stalls a real incident more than once. The accepted gap has then
+  stopped being theoretical, and the answer is more approvers, not an override.
