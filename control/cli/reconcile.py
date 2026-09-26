@@ -11,7 +11,7 @@ raise SystemExit(declare(
     "reconcile",
     inputs={"app": arg("app"), "env": arg("env"), "manifest": arg("manifest", "app.yaml")},
     effects=[
-        "access.roles[]        -> corporate groups, and the edge's authorization table",
+        "access.manage.*        -> the edge's authorization table",
         "access.manage         -> GitHub environment reviewers, and IAM role trust policies",
         "data[]                -> Unity Catalog grant requests, routed to each dataset owner",
         "data[]                -> an IAM policy on the task role, scoped to exactly those datasets",

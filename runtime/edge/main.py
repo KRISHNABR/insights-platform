@@ -107,7 +107,7 @@ async def proxy(app_name: str, path: str, request: Request):
         return JSONResponse(
             {
                 "error": f"{subject} is not a member of any group that may use '{app_name}'",
-                "hint": "ask the app's owners to add your group to access.roles in app.yaml",
+                "hint": "ask an owner to add your group to access.manage in app.yaml",
             },
             status_code=403,
         )

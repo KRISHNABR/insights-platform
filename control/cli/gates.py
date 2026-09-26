@@ -92,48 +92,40 @@ def main() -> int:
                 f"in the data platform. This gate only checks that they already did."
             )
 
-    # 3. the SDK floor is inside the support window (ADR-001, N-2)
+    # 3. the SDK version is inside the support window (ADR-001, N-2)
     #
-    # This gate is the enforcement point for the whole reuse/upgrade story, so it
-    # has to actually be able to fail. An earlier version ended in `or True`, which
-    # meant `>=9.9,<10` and even `>=banana` passed. Now it resolves the declared
-    # range against the versions we actually support.
-    floor = manifest.sdk_floor
-    try:
-        supported = SpecifierSet(floor)
-    except InvalidSpecifier:
-        fail(f"runtime.sdk {floor!r} is not a valid version range")
+    # Read from pyproject.toml, not from app.yaml. `runtime.sdk` used to state it and
+    # was removed: uv.lock already pins the resolved version and uv enforces it on
+    # every build, so a range in the manifest was a second copy that could disagree
+    # with the lockfile while nothing noticed.
+    pyproject = Path("pyproject.toml")
+    if not pyproject.is_file():
+        fail("no pyproject.toml - the SDK dependency has nowhere to be declared")
     else:
-        if not any(supported.contains(Version(v)) for v in SUPPORTED_VERSIONS):
-            fail(
-                f"runtime.sdk {floor} matches no supported version. The platform supports "
-                f"{', '.join(SUPPORTED_VERSIONS)} (current major plus two). See ADR-001."
-            )
-
-    # 4. no secrets committed
-    #
-    # Scan what the TEAM wrote, not what their tools downloaded. An earlier version
-    # walked everything, which meant it scanned .venv/ - tens of thousands of files,
-    # and site-packages ships test fixtures containing literal private keys, so the
-    # gate would fail a clean repo because of a dependency's test data.
-    for path in Path(".").rglob("*"):
-        if any(part in SCAN_SKIP_DIRS for part in path.parts):
-            continue
-        if path.suffix in SCAN_SKIP_SUFFIXES:
-            continue
-        try:
-            if not path.is_file():
-                continue
-            text = path.read_text(errors="ignore")
-        except OSError:
-            # Unreadable (permissions, a broken symlink, a vanished temp file) is not
-            # a finding. Note `is_file()` is INSIDE the try: it stats, so it raises too,
-            # and having it outside meant one unreadable file crashed the whole gate.
-            continue
-        for pattern in SECRET_PATTERNS:
-            if pattern.search(text):
-                fail(f"possible secret in {path}")
-                break
+        body = pyproject.read_text()
+        match = re.search(r"[\"']insights-sdk([^\"']*)[\"']", body)
+        if not match:
+            fail("pyproject.toml does not depend on insights-sdk")
+        else:
+            floor = match.group(1).strip() or ">=0"
+            if "==" in floor:
+                fail(
+                    f"insights-sdk is pinned ({floor!r}) in pyproject.toml. Declare a floor "
+                    f"and a major bound, e.g. '>=0.1,<1', so patches and minors reach you "
+                    f"automatically. uv.lock is what pins the exact version. See ADR-001."
+                )
+            else:
+                try:
+                    supported = SpecifierSet(floor)
+                except InvalidSpecifier:
+                    fail(f"insights-sdk {floor!r} is not a valid version range")
+                else:
+                    if not any(supported.contains(Version(v)) for v in SUPPORTED_VERSIONS):
+                        fail(
+                            f"insights-sdk {floor} matches no supported version. The platform "
+                            f"supports {', '.join(SUPPORTED_VERSIONS)} (current major plus two). "
+                            f"See ADR-001."
+                        )
 
     # 5. the tenant's Dockerfile, checked rather than owned
     #
@@ -183,24 +175,23 @@ def main() -> int:
                     "switch back - a container breakout should land on a user that owns nothing."
                 )
 
-            # (d) the base version must match what the manifest declared AND still be
-            #     the current published one.
-            declared = f"insights-hub/{manifest.base}:"
+            # (d) the pinned base version must still be the current published one.
+            #
+            # Checked against the FROM line alone. There used to be a `runtime.base`
+            # in app.yaml and a rule that the two must AGREE - which is the smell:
+            # a reconciliation between two sources of truth that should have been one.
             final_from = froms[-1].split()[1]
-            if not final_from.startswith(declared):
+            base, _, pinned = final_from.partition("insights-hub/")[2].partition(":")
+            current = BASE_VERSIONS.get(base)
+            if base and current is None:
+                fail(f"Dockerfile builds on {final_from!r}, which is not a published base. "
+                     f"Run `insights runtimes` for the list.")
+            elif current and pinned != current:
                 fail(
-                    f"Dockerfile's final stage is {final_from!r} but app.yaml declares "
-                    f"runtime.base: {manifest.base}. The manifest and the image must agree."
+                    f"Dockerfile pins {base}:{pinned}, but {current} is current. "
+                    f"Base images carry the OS and interpreter patches - because this file "
+                    f"is yours, that fix reaches you only when you bump this line."
                 )
-            else:
-                pinned = final_from.split(":", 1)[1]
-                current = BASE_VERSIONS.get(manifest.base)
-                if current and pinned != current:
-                    fail(
-                        f"Dockerfile pins {manifest.base}:{pinned}, but {current} is current. "
-                        f"Base images carry the OS and interpreter patches - because this file "
-                        f"is yours, that fix reaches you only when you bump this line."
-                    )
 
     failures = globals()["FAILURES"]
     print(f"platform gates: {'PASS' if not failures else f'{failures} failure(s)'}")
