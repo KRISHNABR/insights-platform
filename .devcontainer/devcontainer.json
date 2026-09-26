@@ -1,0 +1,27 @@
+{
+  // Open in GitHub Codespaces and the platform runs in a browser tab, on the free
+  // tier, with nothing installed locally. This exists because "clone four repos and
+  // run a script" is a reasonable ask for a colleague and an unreasonable one for a
+  // reviewer with twenty minutes.
+  "name": "Insights Hub",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+
+  "features": {
+    "ghcr.io/va-h/devcontainers-features/uv:1": { "version": "0.5.11" }
+  },
+
+  // Clone the other three repos beside this one. The local dev loop finds siblings
+  // by name; in production none of this applies, because the SDK is pip-installed.
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+
+  "forwardPorts": [8080],
+  "portsAttributes": {
+    "8080": { "label": "Insights Hub edge", "onAutoForward": "openBrowser" }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python", "bierner.markdown-mermaid"]
+    }
+  }
+}

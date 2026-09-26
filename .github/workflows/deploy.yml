@@ -72,7 +72,8 @@ jobs:
     environment: ${{ inputs.environment }}      # <- the approval gate
     steps:
       - uses: actions/checkout@v4
-        with: {ref: ${{ inputs.ref || github.sha }}}
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
