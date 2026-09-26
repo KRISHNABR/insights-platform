@@ -136,10 +136,12 @@ the manifest loader rejects either mistake (`test_a_web_app_cannot_declare_a_job
 job built on `python-data` has no web server in its image, so it cannot quietly become an
 unmonitored API.
 
-Web apps additionally come in three shapes — `api`, `spa`, `streamlit` — because a data
-scientist wants Streamlit and a full-stack team wants their own bundle. `web.type` selects the
-base image, the identity plumbing and the health contract; **it does not change how data is
-reached**, because the SDK is a library rather than a framework integration.
+Web apps additionally come in two shapes — `api` and `spa` — a JSON backend, or a backend plus
+the team's own built bundle. `web.type` selects the base image and how static files are served;
+**it does not change how data is reached**, because the SDK is a library rather than a framework
+integration. Shapes we refused (Jinja dashboards, Streamlit) are named with their reasons in
+[ADR-005](adr/0005-deliberate-omissions-and-triggers.md) — the manifest loader rejects them
+rather than accepting them and failing at deploy.
 
 ---
 

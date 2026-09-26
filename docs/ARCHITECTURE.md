@@ -121,84 +121,88 @@ flowchart TB
 
 ## 4 · What a tenant actually ships
 
-### Archetype A — web apps: four supported shapes
-
-Teams don't all want the same thing. A data scientist wants Streamlit; a full-stack team
-wants React on FastAPI; a service team wants JSON only. So `web.type` names the shape, and the
-platform supplies the right base image, identity plumbing and health contract for each.
+### Archetype A — web apps: two supported shapes
 
 | `web.type` | Serves HTTP | The team writes | Use it for |
 |---|---|---|---|
-| **`dashboard`** *(default)* | FastAPI + Jinja | handlers + one template | A table, a filter, a chart. **Most apps** |
 | **`api`** | FastAPI | handlers returning JSON | An internal API other apps or agents call |
 | **`spa`** | FastAPI + static files | backend handlers **and** their own built bundle in `static/` | Frontend + backend, bespoke interaction |
-| **`streamlit`** | Streamlit | one `entrypoints.py` | Exploratory dashboards, data-science teams |
 
 ```yaml
 # app.yaml
 kind: web
 web:
-  type: streamlit
-  route: /comp-explorer
+  type: spa
+  route: /headcount-dashboard
 ```
 
 **The insight that makes this work:** the SDK is a **library, not a web-framework
 integration**. `query()` is a function call. So the data, entitlement, masking and audit
-guarantees are identical in all four shapes — what changes is only how HTTP is served and how
-identity reaches your code.
+guarantees are identical in both shapes — what changes is only how HTTP is served.
 
 | What varies by shape | Who provides it |
 |---|---|
-| Base image | platform (`python-web`, `python-streamlit`) |
-| How identity arrives | platform — middleware for FastAPI, a header shim for Streamlit |
-| Health endpoint | platform — SDK route for FastAPI, sidecar for Streamlit |
-| Data, audit, masking, logging | **identical in all four** |
+| Base image | platform (`python-web` for both) |
+| Static file serving | platform, mounted at the app's route for `spa` |
+| Data, audit, masking, logging, identity | **identical in both** |
 
-**How Streamlit fits — the honest details**, because it's the awkward one:
+#### Two shapes we removed, and why
 
-- **Identity.** Streamlit has no middleware. The SDK reads the edge's headers from
-  `st.context.headers` and populates the same `Caller`, so `require_role()` works unchanged.
-- **Health.** Streamlit's own `/_stcore/health` only proves the process is up. The base image
-  runs a tiny health server alongside it that resolves every declared dataset — the same
-  contract as every other app.
-- **Websockets and state.** Streamlit keeps session state over a websocket, so the ALB uses
-  sticky sessions and `runtime.size` caps replicas. That's a real constraint and it's written
-  down rather than discovered in production.
-- **Reruns.** Streamlit re-executes your script on every interaction. Without care that's one
-  warehouse query per click, so the SDK's Streamlit helper wraps `query()` in `st.cache_data`
-  with a default TTL. The audit record still fires on a real read, not on a cache hit.
+The first version of this document described four. Cutting two was the single biggest
+simplification in the platform, and the reasoning is the same both times: **a three-person
+platform team must not own a UI framework on behalf of three hundred apps.**
 
-**Adding a fifth shape is a platform change, not a tenant one** — a base image, an identity
-shim and a health contract. That's deliberate: we're agreeing to patch it forever.
+- **`dashboard` (FastAPI + Jinja), which was the default.** It meant the platform shipped a
+  template layout, a `render()` helper, and `table()`/`chart()` components — a design system
+  with two staff-years of work hiding inside it. It also introduced a class of bug the
+  platform would own forever: Jinja autoescaping escaped the platform's *own* component HTML,
+  so `table()` rendered as visible markup. Every team that wants a page can serve their own
+  bundle from `spa` instead, and then the platform owes them zero opinions about CSS.
+- **`streamlit`.** Genuinely the most requested, and genuinely the worst fit. Streamlit has no
+  middleware, so identity needs a bespoke header shim; its own health endpoint only proves the
+  process is up, so it needs a sidecar; it holds session state over a websocket, so it needs
+  sticky sessions and a replica cap; and it re-executes the whole script per interaction, so
+  it needs a caching wrapper around `query()` or every click is a warehouse hit. Four platform
+  mechanisms that exist for exactly one shape.
 
-A `dashboard` app, in full:
+The manifest loader **refuses** both rather than accepting them and failing at deploy:
 
-```python
-from insights_sdk import web_app, query, require_role, render
-
-app = web_app()                                   # login, logging, /healthz — already wired
-
-@app.get("/")
-def index():
-    require_role("headcount-viewer")              # 403 if they're not in the group
-    rows = query("hr.headcount",
-                 "SELECT dept, headcount FROM hr.headcount WHERE month = :m", m="2026-09")
-    return render("index.html", rows=rows)        # platform layout, your content
+```
+web.type must be one of ('api', 'spa'), got 'streamlit'
 ```
 
-The same app as `streamlit`:
+That is the honest behaviour. A platform that advertises a shape it cannot support has moved
+the failure from a manifest error to a production incident.
+
+**Adding a shape back is a platform change, not a tenant one** — a base image, an identity
+mechanism and a health contract. The bar is that we are agreeing to patch it forever.
+
+A real `spa` backend, in full — this is the actual file, not a sketch:
 
 ```python
-import streamlit as st
-from insights_sdk import query, require_role
+from insights_sdk import current_user, fetch, get_logger, query, require_role, web_app
 
-require_role("headcount-viewer")                  # identical call, identical enforcement
-rows = query("hr.headcount", "SELECT dept, headcount FROM hr.headcount WHERE month = :m",
-             m=st.selectbox("Month", ["2026-09", "2026-08"]))
-st.bar_chart({r["dept"]: r["headcount"] for r in rows})
+app = web_app()          # login, identity, structured logs, metrics and /healthz
+log = get_logger()
+
+
+@app.get("/api/headcount")
+def headcount(month: str = "2026-09"):
+    require_role("headcount-viewer")          # 403 if they aren't in the group
+
+    rows = query(
+        "hr.headcount",
+        "SELECT dept, headcount FROM hr.headcount WHERE month = :month ORDER BY dept",
+        month=month,
+    )
+
+    # Telemetry records the SHAPE of the result, never the result. Passing `rows`
+    # here would raise - the logger refuses anything that isn't a scalar.
+    log.info("headcount_viewed", month=month, rows=len(rows))
+    return {"month": month, "departments": rows}
 ```
 
-Note what is *not* in either file: no login code, no connection, no credential, no table name,
+Note what is *not* in that file: no login code, no connection, no credential, no table name,
 no Dockerfile, no logging setup.
 
 ### Archetype B — a scheduled job (`kind: job`)
@@ -248,7 +252,7 @@ The manifest is not documentation. Every line turns into something real at deplo
 | `access.roles[].name` | What `require_role()` checks at runtime |
 | `access.roles[].groups` | Corporate groups reconciled into the edge's authorization table. Nobody hand-creates a group |
 | `runtime.base` | Which published base image is built FROM |
-| `runtime.size` | ECS CPU/memory, desired count, and ALB stickiness for `streamlit` |
+| `runtime.size` | ECS CPU/memory and desired count |
 | `runtime.sdk` | Checked against the support window; CI fails if it disagrees with `pyproject.toml` |
 | `data[].dataset` | The scope of the app's service identity: **an IAM policy statement** allowing exactly those datasets' resources, and the list `insights doctor` verifies against the data platform's grants. It does **not** grant anything — the data owner does that |
 | `web.type` | Base image, identity shim and health contract for that shape |

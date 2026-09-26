@@ -114,7 +114,7 @@ data: []                       # dataset names; `insights datasets` shows what y
 
 web:
   route: /forecast-dashboard
-  type: spa                    # api | spa | streamlit
+  type: spa                    # api | spa  (the loader refuses anything else)
 
 environments:
   dev:  {auto_deploy: true}
