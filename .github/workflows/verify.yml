@@ -294,3 +294,31 @@ jobs:
             cat "$RUNNER_TEMP/compliance.txt" 2>/dev/null || echo "(did not run)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Move the platform's own `v1` tag when main is green.
+  #
+  # Every tenant pipeline is four lines calling this repo's reusable workflows at
+  # @v1, so a stale tag means every tenant runs a stale CI - with the OLD gate
+  # rules, silently. It was 28 commits behind when someone noticed, because moving
+  # it was a manual step nobody had written down.
+  #
+  # Now it is not a step anybody has to remember. Same floor-not-pin argument as
+  # the SDK's v1 (ADR-001): the tag MOVES within the major line, and a breaking
+  # change to the reusable workflows means cutting v2.
+  # ---------------------------------------------------------------------------
+  tag:
+    needs: verify
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f v1 -m "Moving major tag. Tenant pipelines call this repo's
+          reusable workflows at @v1; it moves within the major line."
+          git push -f origin v1
+          echo "v1 -> $(git rev-parse --short HEAD)"

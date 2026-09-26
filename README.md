@@ -82,6 +82,9 @@ insights-platform/
 ├── RUNBOOK.md                       day two, for us
 ├── COMPLIANCE.md                    the control list, for a reviewer
 ├── docs/
+│   ├── REPO-GUIDE.md                what every folder and file is for
+│   ├── WALKTHROUGH.md               run everything, step by step
+│   ├── APP-YAML.md                  every manifest field
 │   ├── ARCHITECTURE.md              how it works, and why each line is where it is
 │   └── adr/                         the decisions, with alternatives and triggers
 ├── control/

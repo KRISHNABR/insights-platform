@@ -14,7 +14,7 @@ person reading it is on call, tired, and did not write the code.
 
 ```bash
 uv run insights status                                    # every app: team, kind, SDK version, last seen
-uv run insights compliance-report --dataset hr.compensation
+uv run insights compliance-report
 ```
 
 In production, the per-app CloudWatch dashboard is the first stop. Four alarms page us:
@@ -35,7 +35,7 @@ The last one is the only alarm that is about the platform rather than an app.
 | App logs | `runtime/sinks/events.jsonl` | CloudWatch, `/insights/apps/<name>` |
 | Data audit | `runtime/sinks/audit.jsonl` | Unity Catalog `system.access.audit` (authoritative) + our correlation record |
 | What is deployed | `control/registry/apps.json` | same, written by CI |
-| Who may read what | `control/registry/grants.yaml` | Unity Catalog grants (authoritative) |
+| Who may read what | not ours — each team's own data platform | Unity Catalog grants (authoritative) |
 
 ---
 
@@ -64,13 +64,19 @@ Two cases, and they are different:
 If someone argues this is slow: it is meant to be proportional to sensitivity. Standard datasets
 need no grant at all.
 
-### "We need a dataset that doesn't exist yet"
+### "We need to connect to a system we have not used before"
 
-1. The data owner creates and owns it in the data platform.
-2. Add it to [`control/registry/catalog.yaml`](control/registry/catalog.yaml): name, connection,
-   owner, and its location per environment.
-3. Open a PR. **This file gets a real review** — it is a control surface, not configuration.
-4. The team declares it in their `app.yaml`. Restricted datasets also need the owner's grant.
+Not our approval to give. They already have access, or they do not — that is a
+conversation with whoever owns that system.
+
+What we do owe them:
+
+1. **Is the engine supported?** `insights connections` refuses an unsupported one at
+   load time with the list. Adding an engine is about ten minutes — see
+   [ARCHITECTURE §6](docs/ARCHITECTURE.md).
+2. **A secret slot.** We bind their app's identity to `insights/<app>/<name>`; their
+   group writes the value and we cannot read it.
+3. **A `${VAR}` per environment**, if the host differs — `control/registry/environments.yaml`.
 
 ### "We need a library the base image doesn't have"
 
@@ -197,7 +203,7 @@ cost, stated in ADR-004: nobody patches a tenant's base but the tenant.
 
 1. Write an adapter class in `insights_sdk/adapters.py` with a `run()` method.
 2. Register it in `_ENGINES`.
-3. Add the connection to `control/registry/catalog.yaml`.
+3. Add its driver signatures to `_SIGNATURES` so its errors translate.
 
 It inherits entitlement, grants, masking, audit and the redaction assertions for free, because
 those live in the broker and not in the adapter. **That claim is the reason the broker is shaped
@@ -323,7 +329,7 @@ None of these should be worked around. If one is wrong, fix the rule.
 
 ## 6 · Things that will bite you
 
-- **`control/registry/catalog.yaml` is a control surface.** Changing a dataset's location
+- **`control/registry/environments.yaml` is a control surface.** Changing a value
   repoints every app that reads it. Review it like code, because it is.
 - **The reusable `deploy.yml` blocks everyone when broken.** That is the deliberate cost of one
   pipeline. Keep it simple and fast.

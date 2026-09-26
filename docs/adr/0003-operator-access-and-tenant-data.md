@@ -1,185 +1,175 @@
-# ADR-003 — Operator access to tenant data: none standing, and redaction that raises at the emit point
+# ADR-003 — What the platform team can see, and what it cannot
 
-**Status:** Accepted · **Date:** 2026-09-26
-**Drivers from the brief:** *"their compliance partner will review your design before they
-onboard"* · *"you have observability into what runs"* · *"the platform team is 2–3 engineers, who
-also maintain, upgrade, and support everything they build."*
+**Status:** accepted · rewritten when the data broker was removed ([ADR-002](0002-tenant-isolation-and-data-access.md))
+**Decision owner:** platform team
 
 ---
 
 ## Context
 
-Three engineers have to operate everything: diagnose a failing scheduled job, explain a slow
-dashboard, answer "did it run?". That needs real telemetry.
+The brief asks it directly: *what can the platform team itself see and do — in
+telemetry and in tenant data — and how is that access granted, constrained and
+evidenced?*
 
-The same three engineers must not be able to casually read compensation rows — and, crucially,
-must be able to **demonstrate** that they cannot, to a compliance partner who will not accept
-"we wouldn't do that."
+It is the right question to ask a platform team, and the honest answer got **smaller**
+when the broker was removed. An earlier version of this ADR described a break-glass
+workflow: time-boxed operator grants on a dataset, approved by the data owner,
+recorded in `grants.yaml`. That machinery existed because the platform sat in the data
+path and held grants of its own.
 
-The naive failure mode is well known and almost universal: an engineer debugging a data problem
-logs the dataframe. Now sensitive rows are in the log sink, which has looser access than the
-warehouse, longer retention than anyone intended, and is searchable by everyone on the platform
-team. **The data leaked through the observability system, not through the data system.**
+It does not any more. The platform ships connectors; teams connect to systems they
+already have access to. So the platform holds no dataset grants, and there is nothing
+for an operator to break glass *on*.
+
+Three people still have to operate the thing, though. They need to answer "is it
+broken, and whose fault is it" at 3am without that being a licence to read anybody's
+data.
+
+---
 
 ## Decision
 
-**Three controls, in descending order of how much they matter.**
+### 1. Standing access to telemetry. None to tenant data.
 
-### 1. Telemetry is structurally incapable of carrying tenant payloads
+The split works because of what a telemetry record **contains**:
 
-The SDK logger accepts identifiers, counts, durations and status — and **raises** if handed a
-`DataFrame`, a `dict` that looks like a record, or a list of records. Not a lint warning, not a
-convention: an exception, at the emit point, at runtime.
+```json
+{"event": "query_executed", "app": "comp-report", "caller": "sp-comp-report",
+ "connection": "hr-warehouse", "engine": "sqlite", "ms": 2, "rows": 4}
+```
 
-This is deliberately placed in the SDK rather than in CI, because it must hold even when CI is
-bypassed, and because the failure it prevents is an accident by a well-meaning engineer at 2am.
+Caller, app, connection, engine, duration, row count. **No payload, by construction** —
+the logger raises at the point of writing on anything that is not a scalar, and on any
+string long enough to be a payload in disguise.
 
-For datasets classified `restricted`, the SDK additionally asserts that no field name from that
-dataset's schema appears in any log record.
+So the whole telemetry stream can be readable by anyone operating the platform without
+that being access to tenant data. **We see that a query happened. We never see what it
+returned.** Not the SQL either: SQL names tables and columns and often carries a
+literal in a `WHERE`, so a platform-wide log of tenant SQL is a data inventory nobody
+consented to.
 
-### 2. No standing access to tenant data
+### 2. The platform team cannot read a tenant's credential
 
-The platform team has **standing read access to platform telemetry** — logs, metrics, run
-history, the registry — and **no standing access to the rows inside any tenant dataset.**
+This is the one that would otherwise undo everything above — a credential is a key to
+all the data behind it.
 
-They are different systems with different grants, and that separation is the whole point: the
-thing needed daily is available, the thing needed rarely is not.
+```
+secret store        insights/<app>/<secret>
+writes the value    the app's owning group
+reads the value     sp-<app>, on its own prefix only
+CANNOT read it      the platform team — an explicit IAM Deny on insights/*
+sees every read     CloudTrail, including ours
+```
 
-### 3. Break-glass, with evidence
+**Custody is a property of the thing issuing credentials, not of us choosing not to
+call `GetSecretValue`.** An explicit `Deny` cannot be overridden by any `Allow`, so it
+survives somebody later granting the platform role broad access by accident — which is
+how this kind of control usually fails.
 
-When an operator genuinely needs to see tenant data, the path is:
+Locally the same rule holds in a smaller way: secrets are in each tenant's own `.env`,
+gitignored, in their repo. Not in a directory inside ours.
 
-| Property | How |
-|---|---|
-| **Granted** | Explicit request naming the dataset and the reason |
-| **Approved** | By the **dataset owner** (not the platform team) — for restricted data, a second approver |
-| **Constrained** | Time-boxed and auto-expiring; scoped to one dataset; read-only |
-| **Evidenced** | An immutable audit record, and the tenant is **notified**, not merely logged |
+### 3. Operators are not members of tenant groups
 
-The tenant notification is the part that makes it real. An audit log nobody reads is not
-evidence; a message that arrives in the owning team's channel is.
+`suraj@corp.example` is `MG-PLATFORM` and nothing else. The edge refuses him at an app
+he is not listed on, exactly as it refuses anyone:
+
+```
+suraj@corp.example is not a member of any group that may use 'headcount-dashboard'
+```
+
+The platform team is not special-cased into tenant apps. If an operator needs to see
+an app's *behaviour*, that is telemetry and they already have it. If they need to see
+its *data*, see below.
+
+### 4. Reading tenant rows is a conversation with the data owner, not a platform feature
+
+There is no `insights access breakglass` command, and that is the decision.
+
+The platform holds no grant on any dataset, so it has nothing to grant itself
+temporarily. An operator who genuinely needs to see rows asks **that team's data
+owner**, in the data owner's own system — a Unity Catalog grant, a database role. It
+is recorded there, in an audit we cannot edit, and it expires there.
+
+That is a smaller claim than a break-glass workflow, and it has the advantage of being
+true. A workflow in *our* repo would have implied we could grant it, and we cannot.
+
+> **If this becomes routine, something is wrong.** An operator repeatedly needing raw
+> rows to debug means the telemetry is inadequate. The fix is better telemetry, not a
+> smoother path to other people's data.
+
+### 5. The console shows telemetry, never rows
+
+The platform's own portal is the obvious place for this control to leak, so it is
+stated as a property and pinned by a test: the console may not import `insights_sdk`,
+`connectors` or the broker, and the only database it opens is the scheduler's own run
+state, read-only.
+
+It cannot leak what the platform never collected.
+
+---
 
 ## The tension
 
-**Operability versus assurance, again — but sharper, because here the platform team is the
-subject.**
+**Operability versus assurance.**
 
-Every control above makes the platform team's job harder. Not being able to log a dataframe
-makes debugging a data-shape bug genuinely slower. Break-glass adds minutes to an incident.
+Three people supporting three hundred apps need enough signal to diagnose a problem
+they cannot reproduce, on an app whose code they have never read. Every increase in
+that signal is a step toward "the platform team can see everything".
 
-We accepted that, for one reason: **the compliance partner reviews this design before People
-Analytics onboards.** A platform that cannot answer "what can your engineers see?" with something
-better than a policy statement does not get that tenant — and a platform that never gets its
-most sensitive tenant has not proven anything.
+We resolved it by making the *shape* of the signal the control, rather than a policy
+about who may look. A record that structurally cannot contain a payload needs no
+access rules — and a rule that is enforced by the data model does not decay when
+somebody is in a hurry at 3am.
 
-The honest caveat, which belongs in front of the compliance partner rather than buried: an
-operator with break-glass and an operator with standing access can see the same rows. The
-difference is **friction, expiry and evidence**, not capability. We are not claiming otherwise.
+The cost is real: sometimes the telemetry genuinely is not enough, and the answer is
+"ask the team", which is slower than looking. We think that is the right trade at this
+size, and §4's revisit note is where we would notice if it is not.
+
+---
 
 ## Alternatives considered
 
-### A. Redact in the log sink rather than at the emit point
+### A. Break-glass with time-boxed operator grants *(what this ADR used to describe)*
+Coherent while the platform brokered data. Removed with the broker: the platform holds
+no grants, so a break-glass flow here would have been theatre — a form to fill in that
+grants nothing.
 
-Filter sensitive fields centrally as records arrive, so tenants need no discipline at all.
+### B. Standing read access for the platform team, with audit
+Simplest to operate and the most common thing internal platforms actually do. Rejected:
+"we log our own access" is a deterrent, not a control, and it makes the platform team
+the largest standing exposure of every tenant's data.
 
-**Why not.** By the time the sink sees it, the data has already left the process, crossed the
-network and been written somewhere. More importantly, sink-side filtering **fails open**: it can
-only redact patterns it recognises, so an unexpected field name, a nested structure or a
-free-text blob passes straight through. Emit-time type checking **fails closed** — the SDK does
-not need to know what the fields mean, only that a record-shaped object is not a log message.
+### C. No telemetry access either
+Maximally defensible and unoperable. Three people cannot support three hundred apps
+they can see nothing about, and the result would be worse — debugging by asking teams
+to paste logs, which contain more than our records do.
 
-*We would add sink-side redaction as well*, as defence in depth — never instead.
-
-### B. Full standing access, with after-the-fact audit
-
-The operationally easiest option, and very common.
-
-**Why not.** An audit log that nobody reads is not a control, it is a record of what already
-happened. And it fails the specific test this design has to pass: a compliance partner reviewing
-before People Analytics onboards will ask what prevents access, not what records it.
-
-### C. No operator access to tenant data under any circumstances
-
-Superficially the strongest position.
-
-**Why not.** Three engineers cannot operate a platform blind. It pushes every data-shaped
-incident back onto the tenant, which defeats the purpose of having a platform, and in practice it
-gets circumvented — someone gets a warehouse credential by another route and now the access is
-real but invisible. A break-glass path that is used and recorded is safer than a prohibition that
-is quietly worked around.
-
-### D. Synthetic or sampled data for debugging
-
-Give operators a scrubbed copy so real access is rarely needed. Genuinely good, and the right
-long-term answer.
-
-**Why not now.** It is a pipeline to build, validate and keep in sync with schema changes —
-meaningful engineering for a team this size. Deferred with a trigger in ADR-005 rather than
-dismissed.
+---
 
 ## Consequences
 
-**What we now have to do**
+**Good.** The platform team's access is bounded by what the telemetry *can contain*,
+not by a policy. Credential custody is enforced by IAM rather than by us. There is
+nothing to grant ourselves, so there is nothing to abuse.
 
-* Build break-glass properly: request, dataset-owner approval, expiry, audit record, and tenant
-  notification. The notification is what makes it a control rather than paperwork.
-* Maintain per-dataset schema knowledge in the SDK so the restricted-tier field-name assertion
-  can work.
-* Define what happens when an approver is unavailable — see below.
+**Bad.** Some incidents will need a conversation with the tenant that a standing grant
+would have skipped. We will be slower on those.
 
-**What gets harder**
+**The residual risk, stated plainly.** The SDK runs inside the tenant's process, so a
+team *could* open their own connection and read their own data without the platform
+seeing it. Detection is comparing the data platform's audit against our correlation
+records; the recourse is organisational. This is not a gap being worked on — it is a
+correct description of a platform that does not own its tenants' data.
 
-* Debugging a data-shape bug is genuinely slower. An engineer who would have logged the
-  dataframe now has to reason from schema, counts and a sample they cannot see.
-* The logger is on the hot path and now does a type check on every call.
-* Incident response gains minutes at exactly the moment they are expensive.
-
-**The gap we are accepting, explicitly**
-
-If the dataset owner is unreachable during an incident, break-glass stalls. We chose **not** to
-build an emergency override, because an override that exists will be used routinely and the
-control becomes decorative. The fallback is organisational: escalate to the owning team's
-management chain. That is slower, and it is a deliberate choice rather than an oversight.
-
-**What to watch**
-
-* **Break-glass frequency.** If it becomes routine, one of two things is true: the telemetry is
-  inadequate for operating the platform, or the control is theatre. Either way it means redesign,
-  not tolerance.
-* Attempts to log payloads, caught by the SDK. A rising count means the documentation or the
-  ergonomics are wrong.
-
-## What is actually built, and what is not
-
-`insights compliance-report` renders break-glass events, which could reasonably be read as
-"break-glass works". Being precise, because the difference matters to a reviewer:
-
-| | Status |
-|---|---|
-| Redaction raising at the emit point | **built** — `telemetry.py`, and `tests/test_telemetry_boundary.py` |
-| Per-dataset sensitive-field assertion, armed when the broker resolves a restricted dataset | **built** — the field list comes from the catalog, so a tenant cannot shorten it |
-| Every read audited with caller, sensitivity and masked-field count | **built** — `telemetry.audit_read`, written to `runtime/sinks/audit.jsonl`. In production this is the *correlation* record; Unity Catalog's `system.access.audit` is the authoritative one |
-| Zero standing operator access | **built, structurally** — the platform team holds no grants, and the broker's only path to data requires one |
-| The break-glass **data model** — expiry, second approver, tenant notification, usage count | **built** — `control/registry/grants.yaml`, and the report reads it |
-| A break-glass **workflow** | **not built.** With the broker gone the platform holds no grant to break; operator access to a tenant's data is now a request to that team's data owner, in their own system |
-
-The workflow was the first thing cut when time ran short, and it was the right cut: a fake
-implementation would have looked more finished and been worth less than an honest schema plus
-this paragraph. What it costs today is that an operator needing emergency access has to have an
-owner hand-edit `grants.yaml` — which is auditable, and slow, and exactly the friction the
-control is supposed to create. It is the first thing to build after the items in the README's
-"what I'd do next".
+---
 
 ## Revisit when
 
-* **Break-glass becomes routine.** One of two things is then true: the telemetry is inadequate
-  for operating the platform, or the control is theatre. Either way it means redesign, not
-  tolerance.
-* **Misuse of a platform-held credential would be a reportable event rather than an internal
-  one.** That is the trigger to move the broker into a sidecar, so the tenant process stops
-  holding the credential at all.
-* **Attempts to log payloads stop declining.** The SDK catches them, so they are never incidents
-  — but a flat or rising count means the ergonomics or the documentation are wrong, not that
-  people are careless.
-* An approver being unreachable stalls a real incident more than once. The accepted gap has then
-  stopped being theoretical, and the answer is more approvers, not an override.
+- **An operator asks for raw rows more than about twice a quarter.** That is the
+  telemetry failing, and the fix is in the telemetry.
+- **A tenant asks us to hold a connection on their behalf.** That is the broker
+  arriving through the front door, and it should be a deliberate decision rather than
+  a slow accretion of special cases.
+- **Anyone proposes a console feature that shows data rather than shape.** The test in
+  `tests/test_console.py` will fail, and that failure is the conversation.
