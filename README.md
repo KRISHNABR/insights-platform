@@ -1,6 +1,5 @@
 # Insights Hub
 
-[![verify](https://github.com/KRISHNABR/insights-platform/actions/workflows/verify.yml/badge.svg)](https://github.com/KRISHNABR/insights-platform/actions/workflows/verify.yml)
 [![Open in Codespaces](https://img.shields.io/badge/Open%20in-Codespaces-24292e?logo=github)](https://codespaces.new/KRISHNABR/insights-platform)
 
 An internal platform for small analytics apps — dashboards, scheduled reports, data
@@ -81,11 +80,11 @@ Then, from `insights-platform/`:
 ./dev up
 ```
 
-**Or don't install anything.** The badge above runs this whole stack on every push and
-publishes the results — including the checks that must *fail* — to the workflow summary.
-And [Open in Codespaces](https://codespaces.new/KRISHNABR/insights-platform) gives you a
-working environment in a browser tab on GitHub's free tier; the devcontainer clones the
-sibling repos for you.
+**Or don't install anything.** [Open in Codespaces](https://codespaces.new/KRISHNABR/insights-platform)
+gives you a working environment in a browser tab on GitHub's free tier — the devcontainer
+clones the sibling repos for you. There is also a
+[`verify` workflow](.github/workflows/verify.yml) that boots the whole stack and exercises
+the seven behaviours the design rests on, including the two that must *fail*.
 
 That seeds a stub warehouse, starts a stub internal REST API, starts every registered
 app, and puts the platform edge on `localhost:8080`. Requires Python 3.11+ and
