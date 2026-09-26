@@ -251,6 +251,20 @@ the same session cookie and the same group check, and reads `X-Auth-*` exactly a
 tenant app does. If the edge is broken the console is broken too — which is a better
 bug to have than a console that works when nothing else does.
 
+### Everything says "did not become healthy", but the apps are fine
+
+A corporate `HTTP_PROXY` whose bypass list has `localhost` but not `127.0.0.1`. The
+platform talks to itself over `127.0.0.1` — health checks, the edge's hop to each app,
+the REST connector reaching the local stub — so all of it gets handed to a proxy that
+correctly refuses to route loopback.
+
+Every local HTTP call now bypasses the proxy (`trust_env=False` for httpx, a
+`ProxyHandler({})` opener for urllib), scoped to loopback so a tenant's real REST
+connection can still use the proxy when it needs to.
+
+The tell: the edge's own root page works — it makes no upstream call — while every
+app route fails.
+
 ### An app is down
 
 Almost always the app, not the platform. Two different questions, two different logs:

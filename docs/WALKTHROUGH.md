@@ -75,6 +75,18 @@ the console, and the edge (the front door) on `:8080`.
 
 ---
 
+> **On a corporate network:** the platform talks to itself over `127.0.0.1`, and a
+> corporate proxy bypass list often contains `localhost` but **not** `127.0.0.1` — so
+> the proxy is handed loopback traffic it correctly refuses to route, and every app
+> reports "did not become healthy" while serving perfectly. The platform now bypasses
+> the proxy for loopback itself. If you are on an older SDK, this unblocks it:
+>
+> ```bash
+> export NO_PROXY=127.0.0.1,localhost,::1 no_proxy=127.0.0.1,localhost,::1
+> ```
+
+---
+
 ## Step 2b — Set the local secrets
 
 On a fresh clone `up` will also print this:

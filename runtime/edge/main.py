@@ -137,7 +137,10 @@ async def proxy(app_name: str, path: str, request: Request):
     # In production TLS terminates at the load balancer in front of this, and the
     # hop from the gateway to an app stays inside the VPC. If that ever becomes a
     # real network hop, this becomes a verified mTLS client - not a verify=True.
-    async with httpx.AsyncClient(timeout=20, verify=False) as client:
+    # trust_env=False: the edge only ever talks to apps on loopback, and a corporate
+    # HTTP_PROXY would have it hand that traffic to a proxy which correctly refuses to
+    # route 127.0.0.1. Every app route then fails while the edge itself looks fine.
+    async with httpx.AsyncClient(timeout=20, verify=False, trust_env=False) as client:
         upstream_response = await client.request(
             request.method, upstream, headers=headers,
             params=request.query_params, content=await request.body(),
