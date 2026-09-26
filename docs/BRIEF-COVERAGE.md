@@ -103,7 +103,7 @@ justification ages quietly.
 
 | Need | What exists | Proof |
 |---|---|---|
-| **authN** — stubbed SSO | The platform edge. `?as=dana@corp.example` sets a session; in production the ALB's OIDC action against Entra. The edge **strips every client-supplied `X-Auth-*` header** and injects verified ones | `test_a_client_cannot_assert_its_own_identity` · try the curl in the [README](../README.md) |
+| **authN** — stubbed SSO | The platform edge. `?as=krishna@corp.example` sets a session; in production the ALB's OIDC action against Entra. The edge **strips every client-supplied `X-Auth-*` header** and injects verified ones | `test_a_client_cannot_assert_its_own_identity` · try the curl in the [README](../README.md) |
 | **authZ** | Three layers: can you reach the app (edge) · can you do this (`require_role`) · may the **app** read this data (broker). `Caller.groups` is a property returning `()` unless trusted, so an app outside the edge fails every check structurally | `test_an_app_run_outside_the_edge_can_read_nothing` |
 | **Shared data connections** | Two, deliberately different kinds: a **warehouse** (SQLite locally, Databricks SQL Warehouse in production) and an **internal REST API** (a 40-line stdlib stub). Same broker, same entitlement, same audit — different adapter | `test_the_wrong_verb_says_which_one_to_use` · `/api/team` in the example app |
 | **Deployment** | Four generated workflows per app, four lines each, calling one reusable platform pipeline. Build once in dev; uat and prod promote that image | [ARCHITECTURE §8](ARCHITECTURE.md#8--deploying--dev-uat-prod) |

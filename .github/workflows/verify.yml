@@ -111,15 +111,15 @@ jobs:
           ok() { echo "| $1 | ✅ $2 |" >> "$S"; echo "PASS: $1"; }
           no() { echo "::error::$1"; cat "$RUNNER_TEMP/up.log"; exit 1; }
 
-          code=$(curl -s -L -c "$J" -b "$J" "$B/?as=dana@corp.example" -o /dev/null -w '%{http_code}')
+          code=$(curl -s -L -c "$J" -b "$J" "$B/?as=krishna@corp.example" -o /dev/null -w '%{http_code}')
           [ "$code" = 200 ] && ok "Signs in and serves the app" "$code" || no "sign-in returned $code"
 
           curl -s -b "$J" "$B/api/me" | grep -q '"trusted":true' \
             && ok "Identity is established by the edge" "trusted" || no "identity not trusted"
 
           curl -s -b "$J" -H 'X-Auth-User: ceo@corp.example' -H 'X-Auth-Groups: comp-analyst' \
-               "$B/api/me" | grep -q 'dana@corp.example' \
-            && ok "Forged identity headers are stripped" "still dana" || no "forged headers were honoured"
+               "$B/api/me" | grep -q 'krishna@corp.example' \
+            && ok "Forged identity headers are stripped" "still krishna" || no "forged headers were honoured"
 
           curl -s -b "$J" "$B/api/headcount?month=2026-09" | grep -q 'Engineering' \
             && ok "Reads the warehouse through the broker" "rows" || no "warehouse read failed"

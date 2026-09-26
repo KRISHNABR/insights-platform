@@ -102,7 +102,7 @@ better. It is to **not have one**.
 | What a platform engineer can read | **nothing — there is nothing to read** | **nothing** |
 | Who enforces column and row access | Unity Catalog, per person | Unity Catalog, per principal |
 
-Per-user tokens are the part that matters. Unity Catalog applies *Dana's* masks to Dana's
+Per-user tokens are the part that matters. Unity Catalog applies *Krishna's* masks to Krishna's
 query, so the platform cannot see compensation by impersonating an app — the app holds no
 standing credential to impersonate. A platform engineer who genuinely needs tenant rows must
 obtain a **UC grant from the data owner**, recorded in UC's audit, which we cannot edit.
@@ -199,7 +199,7 @@ of the two. Fast to build, and a liability by the second year.
 Every app authenticates to Databricks as itself. Much simpler: no token exchange.
 
 **Why not.** Unity Catalog then sees the app, never the person, so per-user column masks and
-row filters cannot apply and the audit answers "comp-report read this" rather than "Dana did".
+row filters cannot apply and the audit answers "comp-report read this" rather than "Krishna did".
 For a scheduled job that is correct and it is what we do. For an interactive app it throws away
 the main reason to have a governed data platform at all.
 

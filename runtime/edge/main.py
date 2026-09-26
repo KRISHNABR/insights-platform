@@ -12,7 +12,7 @@ Step 2 is the one people skip. Without it, `curl -H "X-Auth-Groups: comp-analyst
 complete authorization bypass - and the app on the other side has no way to know.
 
 Run:  uvicorn runtime.edge.main:app --port 8080
-Log in locally:  http://localhost:8080/a/headcount-dashboard/?as=dana@corp.example
+Log in locally:  http://localhost:8080/a/headcount-dashboard/?as=krishna@corp.example
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ def index() -> dict:
     return {
         "edge": "insights-hub",
         "apps": sorted(_registered()),
-        "how_to_sign_in": "append ?as=dana@corp.example to any app URL",
+        "how_to_sign_in": "append ?as=krishna@corp.example to any app URL",
         "users": sorted(USERS),
     }
 
@@ -89,7 +89,7 @@ async def proxy(app_name: str, path: str, request: Request):
     subject = request.cookies.get(SESSION_COOKIE)
     if subject not in USERS:
         return JSONResponse(
-            {"error": "not signed in", "hint": "add ?as=dana@corp.example to this URL"},
+            {"error": "not signed in", "hint": "add ?as=krishna@corp.example to this URL"},
             status_code=401,
         )
 

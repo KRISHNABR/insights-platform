@@ -16,7 +16,7 @@ cat <<'MSG'
 
     cd insights-platform && ./dev up
 
-  Then open the forwarded port 8080 and append ?as=dana@corp.example to any app URL.
+  Then open the forwarded port 8080 and append ?as=krishna@corp.example to any app URL.
   That is the whole local login.
 
 MSG

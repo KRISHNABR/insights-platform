@@ -6,8 +6,8 @@
 #
 # Four users, each earning their place in a test or a demo:
 users:
-  dana@corp.example:
-    name: Dana Okafor
+  krishna@corp.example:
+    name: Krishna Murari
     groups: [MG-PEOPLE-OPS, headcount-viewer]
 
   sam@corp.example:

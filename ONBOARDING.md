@@ -292,7 +292,7 @@ insights up         # the whole local platform, including the edge
 ```
 
 `insights up` starts a stub warehouse, a stub directory API, every registered app and
-the edge on `localhost:8080`. Sign in by adding `?as=dana@corp.example` to any URL —
+the edge on `localhost:8080`. Sign in by adding `?as=krishna@corp.example` to any URL —
 that's the entire local login.
 
 ---

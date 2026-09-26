@@ -45,7 +45,7 @@ recommendation is reachable rather than aspirational.
 |---|---|---|
 | Language | Python 3.12, **uv** | One toolchain, one lockfile |
 | Web | FastAPI + uvicorn | Already a dependency of the SDK |
-| Front door / login | the platform **edge**, `?as=dana@corp.example` | A stubbed IdP is still a real trust boundary — see §6 |
+| Front door / login | the platform **edge**, `?as=krishna@corp.example` | A stubbed IdP is still a real trust boundary — see §6 |
 | Warehouse | **SQLite file**, seeded by a script | Zero setup. `hr.headcount` is a real table with real rows |
 | Internal REST API | ~40 lines of `http.server` | Proves a second connection type goes through the same broker |
 | Secrets | environment variables the CLI injects | Stands in for a credential the app never chooses |
@@ -327,7 +327,7 @@ verify a signed JWT from the front door. Only two settings differ.
 |---|---|---|
 | Front door | Traefik + oauth2-proxy | ALB with an OIDC action |
 | IdP | **Dex** container, static users | Entra ID |
-| Sign-in | pick `dana@corp.example` from a list | real password + MFA |
+| Sign-in | pick `krishna@corp.example` from a list | real password + MFA |
 | Token the edge receives | OIDC id_token signed by Dex | JWT signed by the ALB |
 | `AUTH_ISSUER` | `http://dex:5556` | the ALB's ARN |
 | `AUTH_JWKS_URL` | `http://dex:5556/keys` | the regional ALB key endpoint |
@@ -488,10 +488,10 @@ credentials, they can read the data.* The answer is to make sure **no credential
 ```mermaid
 flowchart TB
   subgraph I["Interactive app — a real person is present"]
-    U["Dana signs in via Entra"] --> S["her session"]
+    U["Krishna signs in via Entra"] --> S["her session"]
     S --> TE["token exchange<br/>(Databricks federates to the same Entra)"]
-    TE --> UT["a short-lived token <b>for Dana</b>"]
-    UT --> UC1["Unity Catalog sees dana@corp.example<br/>applies HER grants, masks and row filters"]
+    TE --> UT["a short-lived token <b>for Krishna</b>"]
+    UT --> UC1["Unity Catalog sees krishna@corp.example<br/>applies HER grants, masks and row filters"]
   end
   subgraph J["Scheduled job — nobody is present"]
     TR["ECS task role"] --> WIF["workload identity federation<br/>(OIDC, no client secret)"]
@@ -509,7 +509,7 @@ flowchart TB
 | Who enforces column/row access? | Unity Catalog, per person | Unity Catalog, per principal |
 
 **This is the part that answers the objection properly.** With per-user tokens, UC applies
-*Dana's* column masks — so the platform team cannot see compensation by impersonating an app,
+*Krishna's* column masks — so the platform team cannot see compensation by impersonating an app,
 because the app has no standing credential to impersonate. And a platform engineer who wants
 to read tenant data must get a Unity Catalog grant from the **data owner**, recorded in UC's
 own audit, which we cannot edit.
@@ -602,7 +602,7 @@ app, and puts the edge on `localhost:8080`.
 
 ```mermaid
 flowchart TB
-  DEV["you<br/>localhost:8080<br/><i>?as=dana@corp.example</i>"] --> EDGE["<b>edge</b><br/>stub SSO · strips client identity<br/>injects the verified one"]
+  DEV["you<br/>localhost:8080<br/><i>?as=krishna@corp.example</i>"] --> EDGE["<b>edge</b><br/>stub SSO · strips client identity<br/>injects the verified one"]
   EDGE --> W["headcount-dashboard<br/>uvicorn"]
   SCH["<b>scheduler</b><br/>cron matching, in Python"] --> J["comp-report<br/>runs to completion"]
   W --> SDK1["insights_sdk broker"]
@@ -634,9 +634,9 @@ That distinction is the point of the local stack.
 
 ```bash
 # 1 · sign in, and read the warehouse through the broker
-open "http://localhost:8080/a/headcount-dashboard/?as=dana@corp.example"
+open "http://localhost:8080/a/headcount-dashboard/?as=krishna@corp.example"
 
-# 2 · a client cannot assert its own identity — still Dana
+# 2 · a client cannot assert its own identity — still Krishna
 curl -b cookies.txt -H "X-Auth-Groups: comp-analyst" \
      http://localhost:8080/a/headcount-dashboard/api/me
 

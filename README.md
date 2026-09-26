@@ -47,7 +47,7 @@ credentials. Directory names matter — the local loop finds the sibling repos b
 `./dev up --port 9100` if 8080 is taken.
 
 ```bash
-open "http://localhost:8080/a/headcount-dashboard/?as=dana@corp.example"
+open "http://localhost:8080/a/headcount-dashboard/?as=krishna@corp.example"
 ```
 
 Appending `?as=` is the whole local login.
@@ -60,7 +60,7 @@ gives you a working environment in a browser.
 ### Four things worth trying
 
 ```bash
-# 1 · a client cannot assert its own identity — still dana
+# 1 · a client cannot assert its own identity — still krishna
 curl -b cookies.txt -H "X-Auth-Groups: comp-analyst" \
      http://localhost:8080/a/headcount-dashboard/api/me
 

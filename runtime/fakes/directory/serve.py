@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
 PEOPLE = [
-    {"email": "dana@corp.example", "name": "Dana Okafor", "dept": "People Ops"},
+    {"email": "krishna@corp.example", "name": "Krishna Murari", "dept": "People Ops"},
     {"email": "sam@corp.example", "name": "Sam Whitfield", "dept": "People Analytics"},
     {"email": "raj@corp.example", "name": "Raj Mehta", "dept": "People Analytics"},
     {"email": "lena@corp.example", "name": "Lena Fischer", "dept": "Engineering"},
