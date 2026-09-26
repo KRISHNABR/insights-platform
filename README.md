@@ -27,11 +27,15 @@ and everything is indexed from here.
 Four repositories, side by side in one directory:
 
 ```bash
-git clone <this-repo>            insights-platform
-git clone <sdk-repo>             insights-sdk
-git clone <web-app-repo>         insights-headcount-dashboard
-git clone <job-app-repo>         insights-comp-report
+mkdir insights-hub && cd insights-hub
+git clone https://github.com/KRISHNABR/insights-platform.git
+git clone https://github.com/KRISHNABR/insights-sdk.git
+git clone https://github.com/KRISHNABR/insights-headcount-dashboard.git
+git clone https://github.com/KRISHNABR/insights-comp-report.git
 ```
+
+The directory names matter — the local dev loop finds the sibling repos by name. (In
+production none of this applies: the SDK is pip-installed and the registry is mounted.)
 
 Then, from `insights-platform/`:
 
@@ -101,10 +105,10 @@ inherited.*
 
 | Repository | Who touches it | What's in it |
 |---|---|---|
-| [`insights-sdk`](../insights-sdk) | **tenants**, as a dependency | the library, the `insights` CLI, the scaffold templates |
+| [`insights-sdk`](https://github.com/KRISHNABR/insights-sdk) | **tenants**, as a dependency | the library, the `insights` CLI, the scaffold templates |
 | `insights-platform` *(here)* | **platform team only** | `runtime/` · `control/` · the reusable CI workflow · docs and ADRs |
-| [`insights-headcount-dashboard`](../insights-headcount-dashboard) | tenant | example: interactive web app |
-| [`insights-comp-report`](../insights-comp-report) | tenant | example: scheduled job, restricted data |
+| [`insights-headcount-dashboard`](https://github.com/KRISHNABR/insights-headcount-dashboard) | tenant | example: interactive web app |
+| [`insights-comp-report`](https://github.com/KRISHNABR/insights-comp-report) | tenant | example: scheduled job, restricted data |
 
 ```
 insights-platform/
