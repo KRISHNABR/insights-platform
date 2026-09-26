@@ -1,90 +1,125 @@
-# The access registry. Platform-owned; tenants CANNOT edit this file.
+# The access registry. Platform-owned; tenants cannot edit it.
 #
-# Two levels, and the distinction is the whole model:
+# READ THIS FIRST, because the shape of this file is a decision (ADR-002 s2):
 #
-#   connections   the shared data connections the platform operates. ONE warehouse,
-#                 ONE internal REST API. Every tenant uses the same ones. This is the
-#                 "shared data connection" in the literal sense - and it is exactly why
-#                 the platform does not hand it out: sharing a connection would mean
-#                 sharing a credential.
+#   This is NOT the source of truth for governance. Unity Catalog is.
+#   Who owns a table, how sensitive it is, who may read which columns and which
+#   rows - all of that lives in Unity Catalog, where it is enforced on every path
+#   to the data including a notebook, not just on ours.
 #
-#   datasets      the unit of ENTITLEMENT. A named thing inside a connection, with an
-#                 owner and a classification. An app declares datasets, never connections.
+#   This file is a PROJECTION. It holds only what the APPLICATION layer needs:
+#     * a nickname, so tenant SQL is portable across environments
+#     * where that nickname points in each environment
+#     * an owner, so a request for access can be routed to a human
 #
-# This is not a data catalog. There is no search, no schema browser, no lineage and no
-# sample data - see ADR-002 section 5 and ADR-005 omission 9. It holds the minimum the
-# broker needs in order to enforce, and nothing a team who cannot read the data should see.
+#   What is deliberately NOT here any more: `classification` and `masking`. They
+#   were here in an earlier version and were removed - a governance model
+#   maintained beside Unity Catalog's is a second source of truth, and second
+#   sources of truth drift silently.
+#
+# Not a data catalog either: no search, no schema browser, no lineage, no sample
+# rows. Discovery belongs in Unity Catalog, which already has those governed by
+# the same grants. See ADR-002 s5.
 
 # ---------------------------------------------------------------------------
 # Shared connections - operated by the platform, never exposed to tenant code.
+# Nobody is ever granted a connection; access is granted per dataset, in UC.
 # ---------------------------------------------------------------------------
 connections:
 
-  warehouse-main:
-    engine: warehouse                 # -> insights_sdk.data.query(dataset, sql, **params)
-    description: The analytics warehouse.
+  lakehouse:
+    engine: databricks               # -> query(dataset, sql, **params)
+    description: The company lakehouse.
+    governance: external             # Unity Catalog enforces grants, masks and
+                                     # row filters. The broker does NOT.
     environments:
-      local: {dsn_env: INSIGHTS_WAREHOUSE_DSN}    # stub: a SQLite file seeded by runtime/fakes
-      prod:  {dsn_env: INSIGHTS_WAREHOUSE_DSN}    # real: injected from the platform secret store
+      # No credential reference: there is no stored secret. Interactive apps use
+      # OAuth token exchange so UC sees the real person; jobs use workload
+      # identity federation from their task role. See ADR-002 s3.
+      dev:
+        host_env: DATABRICKS_HOST
+        warehouse_env: DATABRICKS_WAREHOUSE_ID
+        auth: oauth-federated
+      prod:
+        host_env: DATABRICKS_HOST
+        warehouse_env: DATABRICKS_WAREHOUSE_ID
+        auth: oauth-federated
+      # Local development. Postgres is the closest honest stand-in: it has real
+      # users and real GRANTs, so the restricted-data behaviour can be
+      # DEMONSTRATED rather than described. It is not Unity Catalog - column
+      # masks are approximated with views and column privileges, so governance
+      # behaviour is only exactly right against a real workspace.
+      local:
+        dsn_env: INSIGHTS_WAREHOUSE_DSN
+        governance: local-approximation
 
   directory-api:
-    engine: rest                      # -> insights_sdk.data.fetch(dataset, resource, **params)
+    engine: rest                     # -> fetch(dataset, params=...)
     description: The internal employee directory service.
+    governance: none                 # a plain internal service; entitlement is
+                                     # enforced by the broker alone
     environments:
       local: {base_url_env: INSIGHTS_DIRECTORY_URL, token_env: INSIGHTS_DIRECTORY_TOKEN}
+      dev:   {base_url_env: INSIGHTS_DIRECTORY_URL, token_env: INSIGHTS_DIRECTORY_TOKEN}
       prod:  {base_url_env: INSIGHTS_DIRECTORY_URL, token_env: INSIGHTS_DIRECTORY_TOKEN}
 
 # ---------------------------------------------------------------------------
-# Datasets - what an app may actually be entitled to.
-# classification: internal | confidential | restricted
-# `restricted` triggers the restricted tier: dataset-owner grant, emit-time field
-# assertions, and no standing operator access. See ADR-002.
+# Datasets - the nickname an app declares, and where it points.
+#
+#   owner      mirrors the Unity Catalog object owner. Kept here only so the CLI
+#              can tell a team WHO to ask; UC remains authoritative.
+#   locations  the three-level UC name per environment. This is the whole reason
+#              the nickname exists: `hr.headcount` is one table in dev and
+#              another in prod, and tenant SQL never learns which.
 # ---------------------------------------------------------------------------
 datasets:
 
   hr.headcount:
-    description: Headcount by department and month. Aggregate, no individuals.
-    connection: warehouse-main
-    classification: internal
+    description: Headcount by department and month.
+    connection: lakehouse
     owner: MG-PEOPLE-OPS
     locations:
       local: {table: hr_headcount}
-      prod:  {table: hr.headcount_v2}   # physical name differs per env; the alias does not.
-                                        # This is what makes tenant SQL portable.
+      dev:   {uc: hr_dev.people.headcount}
+      prod:  {uc: hr_prod.people.headcount}
 
   hr.compensation:
     description: Individual compensation records.
-    connection: warehouse-main
-    classification: restricted
+    connection: lakehouse
     owner: MG-PEOPLE-ANALYTICS
+    # Sensitivity is a Unity Catalog tag (sensitivity=restricted), not a field
+    # here. Column masks on employee_name and base_salary are UC masking
+    # functions. Both are enforced by UC for every reader, including notebooks.
     locations:
       local: {table: hr_compensation}
-      prod:  {table: hr.compensation}
-    # Fields the broker masks unless the caller holds the named role. Enforced in
-    # step 8 of the broker, after the read and before the rows reach tenant code.
-    masking:
+      dev:   {uc: hr_dev.people.compensation}
+      prod:  {uc: hr_prod.people.compensation}
+    # Local-only: the approximation of UC's column masks, so the behaviour is
+    # demonstrable on a laptop. Ignored entirely when governance is external.
+    local_masking:
       employee_name: comp-analyst
       base_salary:   comp-analyst
-    # Field names asserted absent from every telemetry record emitted by an app
-    # holding this dataset (ADR-003). The list lives here, not in tenant code.
+    # Field names asserted absent from telemetry emitted by any app that reads
+    # this dataset (ADR-003). This one IS ours: it is about our log pipeline,
+    # not about the data platform.
     sensitive_fields: [employee_id, employee_name, base_salary, bonus_pct]
 
   directory.people:
     description: Employee name and department lookup.
     connection: directory-api
-    classification: internal
     owner: MG-PEOPLE-OPS
     locations:
       local: {resource: /people}
+      dev:   {resource: /v1/people}
       prod:  {resource: /v1/people}
 
   sales.pipeline:
     description: Open opportunities by region.
-    connection: warehouse-main
-    classification: internal
+    connection: lakehouse
     owner: MG-SALES-OPS
     locations:
       local: {table: sales_pipeline}
-      prod:  {table: sales.pipeline}
-    # Deliberately declared by NO app. Present so the test suite can prove that
-    # knowing a dataset name is not access - entitlement is enforced, not assumed.
+      dev:   {uc: sales_dev.crm.pipeline}
+      prod:  {uc: sales_prod.crm.pipeline}
+    # Deliberately declared by NO app, so the test suite can prove that knowing a
+    # dataset's name is not access.

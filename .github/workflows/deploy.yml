@@ -1,79 +1,116 @@
-# The central reusable workflow. Every tenant's four-line CI file calls this.
+# Reusable deploy. Called by every tenant's deploy-dev / deploy-uat / deploy-prod.
 #
-# This is where ADR-004's "CI layer" lives: rules that must never SHIP, but that the SDK
-# cannot enforce because they are about the manifest rather than about runtime behaviour.
-# The platform owns this pipeline even though it does not own the tenant's code - which
-# is the whole bargain: you own your code, we own the road it travels on.
-#
-# Improving any step here improves it for all 25 apps in one commit. That property is the
-# main argument for the thin-caller pattern, and it is what makes a 3-person team viable.
+# One workflow, three environments. The environment name is the ONLY difference a
+# tenant passes, and everything that varies by environment - approvers, the AWS
+# account, the registry, whether a schedule is armed - is resolved platform-side
+# from app.yaml. A tenant cannot grant themselves a production deploy by editing
+# their own pipeline, because their pipeline is four lines and calls this.
 name: deploy
 
 on:
   workflow_call:
     inputs:
-      app:
-        required: true
-        type: string
-      environment:
-        required: false
-        type: string
-        default: local
+      app:         {required: true,  type: string}
+      environment: {required: true,  type: string}   # dev | uat | prod
+      ref:         {required: false, type: string}   # promote an existing build
+
+permissions:
+  id-token: write        # GitHub OIDC -> AWS. No long-lived keys anywhere.
+  contents: read
+  packages: write
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Re-run every CI gate. A promotion must not be able to skip validation
+  #    just because someone clicked a button in a different workflow.
+  # ---------------------------------------------------------------------------
   validate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    uses: ./.github/workflows/ci.yml
+    with:
+      app: ${{ inputs.app }}
 
-      - name: Check out the platform registry
-        uses: actions/checkout@v4
-        with:
-          repository: insights-hub/insights-platform
-          path: .platform
-
-      - uses: actions/setup-python@v5
-        with: {python-version: "3.12"}
-
-      - run: pip install "insights-sdk>=0.1,<1"
-
-      # One command, and it is the SAME command a tenant runs at their desk. If doctor
-      # and CI could disagree, the tenant would learn the rules from CI failures - which
-      # is the slowest possible feedback loop and the reason people resent platforms.
-      - name: insights doctor
-        env:
-          INSIGHTS_REGISTRY_DIR: .platform/control/registry
-          INSIGHTS_ENV: ${{ inputs.environment }}
-        run: insights doctor
-
-      # Checks that are specifically about SHIPPING, so they have no runtime equivalent.
-      - name: Platform gates
-        env:
-          INSIGHTS_REGISTRY_DIR: .platform/control/registry
-        run: |
-          python .platform/control/cli/gates.py \
-            --app "${{ inputs.app }}" \
-            --manifest app.yaml \
-            --dockerfile Dockerfile
-
-      - name: Tenant tests
-        run: |
-          if [ -d tests ]; then pip install pytest && pytest -q; else echo "no tests"; fi
-
-  build-and-register:
+  # ---------------------------------------------------------------------------
+  # 2. Build once, in dev. uat and prod PROMOTE that artefact - they never
+  #    rebuild. If prod rebuilt, prod would be running code no one tested.
+  # ---------------------------------------------------------------------------
+  build:
     needs: validate
+    if: inputs.environment == 'dev'
     runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.push.outputs.image }}
     steps:
       - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_DEV }}:role/insights-deploy
+          aws-region: eu-west-1
+      - uses: aws-actions/amazon-ecr-login@v2
 
-      # Built FROM the platform base image, which carries the runtime, the SDK, the
-      # non-root user and the entrypoint. A platform CVE is one base-image rebuild
-      # rather than 25 pull requests.
-      - name: Build
-        run: docker build -t "insights-hub/${{ inputs.app }}:${{ github.sha }}" .
+      # The tenant has no Dockerfile. The platform renders one from
+      # runtime.base + runtime.packages in app.yaml, so the image a team gets is
+      # a consequence of what they declared, not of what they wrote.
+      - id: push
+        run: |
+          uv run python .platform/control/cli/render_dockerfile.py \
+            --manifest app.yaml --out Dockerfile.generated
+          IMAGE="$ECR/insights/${{ inputs.app }}:${{ github.sha }}"
+          docker build -f Dockerfile.generated -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
-      - name: Register
-        run: echo "would append ${{ inputs.app }} to control/registry/apps.json"
+  # ---------------------------------------------------------------------------
+  # 3. Release. `environment:` is what makes GitHub enforce the approval gate.
+  #    The reviewer list is reconciled by the platform from access.manage in
+  #    app.yaml - it is NOT configured in the tenant repo, so ownership of the
+  #    app and the right to promote it cannot drift apart.
+  # ---------------------------------------------------------------------------
+  release:
+    needs: [validate, build]
+    if: always() && needs.validate.result == 'success'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}      # <- the approval gate
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: ${{ inputs.ref || github.sha }}}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars[format('AWS_ACCOUNT_{0}', inputs.environment)] }}:role/insights-deploy
+          aws-region: eu-west-1
+
+      # Reconcile everything app.yaml declared into things that actually exist.
+      # This is where the manifest stops being a document and becomes infrastructure.
+      - name: Reconcile from the manifest
+        run: |
+          uv run python .platform/control/cli/reconcile.py \
+            --app "${{ inputs.app }}" --env "${{ inputs.environment }}" --manifest app.yaml
+          # - access.roles[]        -> corporate groups + the edge's authz table
+          # - access.manage         -> GitHub environment reviewers + IAM trust
+          # - data[]                -> IAM policy on the task role, scoped to
+          #                            exactly the secrets those datasets need
+          # - runtime.size          -> ECS cpu/memory/desired count
+          # - web.route             -> ALB listener rule
+          # - job.*                 -> EventBridge Scheduler (schedule, timeout,
+          #                            retries, concurrency, catchup)
+          # - outputs[]             -> S3 prefix + lifecycle rule
 
       - name: Deploy
-        run: echo "would roll out ${{ inputs.app }} to ${{ inputs.environment }}"
+        run: |
+          uv run python .platform/control/cli/deploy.py \
+            --app "${{ inputs.app }}" --env "${{ inputs.environment }}" \
+            --image "${{ needs.build.outputs.image }}"
+
+      - name: Register
+        run: |
+          uv run python .platform/control/cli/register.py \
+            --app "${{ inputs.app }}" --env "${{ inputs.environment }}" \
+            --image "${{ needs.build.outputs.image }}" --sha "${{ github.sha }}"
+
+      # A deploy that starts and then fails on first use is the classic silent
+      # failure. /healthz resolves every declared dataset and checks its
+      # credential was injected, so we find out here instead of at 06:00.
+      - name: Verify
+        run: |
+          uv run python .platform/control/cli/verify.py \
+            --app "${{ inputs.app }}" --env "${{ inputs.environment }}" --timeout 120

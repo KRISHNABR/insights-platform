@@ -25,7 +25,7 @@ from pathlib import Path
 import httpx
 import yaml
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 HERE = Path(__file__).parent
 REGISTRY = HERE.parent.parent / "control" / "registry"
@@ -117,11 +117,15 @@ async def proxy(app_name: str, path: str, request: Request):
             params=request.query_params, content=await request.body(),
         )
 
+    # Pass the response through unchanged. An earlier version re-encoded everything
+    # as JSON, which quietly broke any app serving HTML, CSS or an image - i.e. the
+    # whole `spa` shape. A front door should move bytes, not interpret them.
     passthrough = {
         k: v for k, v in upstream_response.headers.items() if k.lower() not in HOP_BY_HOP
     }
-    return JSONResponse(
-        content=upstream_response.json() if upstream_response.headers.get("content-type", "").startswith("application/json") else {"body": upstream_response.text},
+    return Response(
+        content=upstream_response.content,
         status_code=upstream_response.status_code,
         headers=passthrough,
+        media_type=upstream_response.headers.get("content-type"),
     )

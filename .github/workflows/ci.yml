@@ -1,0 +1,48 @@
+# Reusable CI. Called by every tenant's ci.yml on pull requests and branches.
+#
+# This job answers "is this correct?" It deploys nothing, touches no environment
+# and needs no cloud credentials. That separation is why a tenant can open a PR
+# without thinking about environments at all.
+name: ci
+
+on:
+  workflow_call:
+    inputs:
+      app: {required: true, type: string}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the platform registry
+        uses: actions/checkout@v4
+        with:
+          repository: insights-hub/insights-platform
+          path: .platform
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with: {version: "0.5.11"}
+
+      - run: uv sync --frozen        # --frozen: the committed lockfile must be current
+
+      # The SAME command the tenant runs at their desk. Not a similar check -
+      # the same one, so CI can never teach a rule the CLI didn't already enforce.
+      - name: insights doctor
+        env:
+          INSIGHTS_REGISTRY_DIR: .platform/control/registry
+        run: uv run insights doctor
+
+      # Checks that are specifically about SHIPPING, so they have no runtime
+      # equivalent: schema, entitlement vs registry, SDK support window,
+      # committed secrets, and manifest/pyproject agreement.
+      - name: Platform gates
+        env:
+          INSIGHTS_REGISTRY_DIR: .platform/control/registry
+        run: uv run python .platform/control/cli/gates.py --app "${{ inputs.app }}"
+
+      - name: Tenant tests
+        run: |
+          if [ -d tests ]; then uv run pytest -q; else echo "no tests in this repo"; fi

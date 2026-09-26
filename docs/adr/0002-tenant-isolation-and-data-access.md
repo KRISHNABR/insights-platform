@@ -1,4 +1,4 @@
-# ADR-002 — Tenant isolation and data access: shared connections are brokered, not handed out
+# ADR-002 — Tenant isolation and data access: broker the reads, delegate the governance
 
 **Status:** Accepted · **Date:** 2026-09-26
 **Drivers from the brief:** *"access to shared data connections (e.g., a warehouse, an internal
@@ -6,262 +6,169 @@ REST API)"* · *"every tenant is a team of employees… you have observability i
 organisational recourse"* · *"their compensation data will be the most sensitive thing the
 platform holds, and their compliance partner will review your design before they onboard."*
 
-> This is the longest ADR in the set, because it is where three of the brief's constraints collide.
+> The longest ADR in the set, because it is where three of the brief's constraints collide.
 > Everything else in the design is downstream of the first decision below.
 
 ---
 
 ## Context
 
-The brief asks for shared data connections by name:
+The brief asks for shared data connections by name, and today every team hand-rolls one: a
+connection string in each team's secret store, a copy of a credential per app, and no way to
+answer *"who read compensation last month?"* without asking five teams and trusting the answers.
 
-> *"Apps share common needs. At minimum: … access to shared **data connections** (e.g., a
-> warehouse, an internal REST API — stub these with fixtures or fakes)"*
-
-Today each team hand-rolls this. In practice that means a connection string in every team's secret
-store, a copy of a credential per app, and no way to answer *"who read compensation data last
-month?"* without asking five teams and trusting the answers.
-
-Three facts from the brief pull on the replacement, and they do not agree.
+Three facts pull on the replacement, and they do not agree.
 
 | Fact | What it demands |
 |---|---|
 | The platform team is **2–3 engineers** who also run support | One data path, not one per tenant. Whatever we build, we are paged for |
-| Tenants are **teams of employees**, with observability and organisational recourse | The threat model is **accident and casual over-access, not attack** — share aggressively |
+| Tenants are **teams of employees**, with observability and organisational recourse | Threat model is **accident and casual over-access, not attack** — share aggressively |
 | **People Analytics**' compensation data is the most sensitive thing here, and **their compliance partner reviews the design before they onboard** | For that data: least privilege, and **evidence** a sceptical reviewer can read |
 
-All of which reduces to one question, and this ADR is the answer to it:
+Two questions follow, and this ADR answers both:
 
-**When a tenant needs data, does the platform give them a connection — or does the platform perform
-the read on their behalf?**
+1. **When a tenant needs data, does the platform give them a connection — or perform the read?**
+2. **Who owns the governance model** — who may read which columns, and how that is enforced?
 
 ## Decision
 
 ### 1. The platform brokers reads. It never hands out a connection.
 
-This is the hinge. Everything else follows.
-
-A tenant declares *intent* in its manifest:
+A tenant declares intent in its manifest and reads through one function:
 
 ```yaml
-# app.yaml — in the tenant's own repo
 data:
-  - dataset: hr.headcount        # a logical name. NOT a connection string
+  - dataset: hr.headcount        # a logical name. NOT a table, NOT a connection
     access: read
 ```
 
-…and reads through one function:
-
 ```python
-from insights_sdk.data import query
-
-rows = query(
-    "hr.headcount",
-    "SELECT dept, headcount FROM hr.headcount WHERE month = :month",
-    month="2026-09",
-)
+rows = query("hr.headcount", "SELECT dept, headcount FROM hr.headcount WHERE month = :m", m="2026-09")
 ```
 
-There is no `connect()`, no cursor, no DSN, no engine selection, and **no exported way to obtain
-one**. `query()` returns `list[dict]`.
+There is no `connect()`, no cursor, no DSN and **no exported way to obtain one** — a test
+asserts the shape of the SDK so that adding one fails CI.
 
-The platform resolves the *mechanism* in a registry the tenant cannot edit: which engine, which
-physical location in this environment, which credential, what classification, which group owns it.
+Between the call and the rows the broker runs a fixed sequence: load the manifest, check the
+dataset is **declared**, check the caller is **trusted**, **resolve** the nickname to a physical
+location for this environment, **acquire a short-lived credential**, execute, and **audit**.
 
-Between the call and the rows, the broker runs a fixed sequence:
+**Why this is the hinge:** entitlement, audit and correlation are enforceable only because there
+is exactly one code path to data. Hand out a connection and all of them become advisory.
 
-```mermaid
-flowchart TB
-  Q["query('hr.headcount', sql, **params)"] --> S1["1 · load this app's manifest<br/>cached at startup"]
-  S1 --> S2{"2 · ENTITLEMENT<br/>declared in app.yaml?"}
-  S2 -->|"no"| X1(["EntitlementError"])
-  S2 -->|"yes"| S3{"3 · IDENTITY<br/>is the caller trusted?"}
-  S3 -->|"no"| X2(["IdentityError"])
-  S3 -->|"yes"| S4["4 · RESOLVE<br/>alias to engine · physical location<br/>classification · owner · credential"]
-  S4 --> S5{"5 · GRANT<br/>if restricted, is there an active grant?"}
-  S5 -->|"no"| X3(["EntitlementError"])
-  S5 -->|"yes, or not restricted"| S6["6 · REWRITE<br/>alias to physical name, so tenant SQL<br/>is environment-portable"]
-  S6 --> S7["7 · EXECUTE<br/>engine adapter, platform-held credential"]
-  S7 --> S8["8 · SCOPE<br/>masking rules for this caller's roles"]
-  S8 --> S9["9 · AUDIT<br/>who · app · dataset · classification<br/>rows · duration"]
-  S9 --> OUT(["list[dict]<br/>never a connection, a cursor or a credential"])
-```
+### 2. Unity Catalog owns governance. We do not reimplement it.
 
+**This reverses the obvious instinct**, which is for the platform to own its own classification
+and masking rules. An earlier version of this design did exactly that.
 
-Steps 2, 5, 8 and 9 are only enforceable **because there is exactly one code path to the data.**
-Hand out a connection and every one of them becomes advisory.
+| Governance question | Owner |
+|---|---|
+| Who owns this table? | Unity Catalog object owner (a group) |
+| How sensitive is it? | UC tag, e.g. `sensitivity=restricted` |
+| Who may read it? | `GRANT SELECT ON TABLE … TO <group>` |
+| Which **columns** may this person see? | UC **column mask** |
+| Which **rows**? | UC **row filter** |
+| Who read what, when? | UC `system.access.audit` |
 
-### 2. The registry has two levels: connections are shared, datasets are entitled
+**Why we gave it up.** A governance model maintained by three engineers *beside* the one the
+data platform already enforces is a second source of truth, and second sources of truth drift
+silently. Ours would have been enforced only for apps that came through our broker; Unity
+Catalog's is enforced for every path to the data, including a notebook. Our masking rules would
+have been one more thing a compliance partner has to audit *separately*.
 
-This distinction carries a lot of the design, so it is worth being precise about.
+**What we keep** — five things UC does not do, and the reason the platform is not redundant:
 
-| | What it is | Who uses it | Granularity of access |
-|---|---|---|---|
-| **Connection** | A shared data source the platform operates — one warehouse, one internal REST API | The platform only. Tenant code never names one | n/a — nobody is granted a connection |
-| **Dataset** | A named thing *inside* a connection, with an owner and a classification | Tenants declare these in `app.yaml` | The unit of entitlement |
-
-So the connection genuinely is shared — that is what the brief asks for — but **it is shared by
-being operated on your behalf, not by being handed to you.** Granting a connection would grant
-everything reachable through it. Granting a dataset grants one named thing, with an owner who
-can say no.
-
-The brief names two kinds of connection. They get different verbs and the same broker:
-
-| Engine | Stubbed as | Tenant API | Used by |
-|---|---|---|---|
-| `warehouse` | SQLite file + a seed script | `query(dataset, sql, **params)` | both example apps |
-| `rest` | ~30-line HTTP service over fixture JSON | `fetch(dataset, resource, **params)` | the web app's directory lookup |
-
-Different verbs because SQL and HTTP genuinely are different, and pretending otherwise produces a
-lowest-common-denominator API that is bad at both. **Identical broker:** steps 1–6 and 8–9 are
-shared code; only step 7 differs. A third engine is a platform change, not a tenant change, and it
-inherits every control for free.
-
-### 3. The credential is the platform's, per app — and the end user's identity does not reach the warehouse
-
-Three models were available:
-
-| | Model | Audit can answer |
+| # | Ours | Why UC cannot |
 |---|---|---|
-| a | One shared platform credential for all apps | "something read this" |
-| **b** | **Per-app credential, platform-held; caller identity carried in the audit record and in scoping rules** | **"app X read this, on behalf of user Y"** |
-| c | Per-user credential exchange — the end user's own identity reaches the engine | "user Y read this", enforced by the engine |
+| 1 | **The app contract**: `app.yaml` declares which datasets an app uses | UC knows principals, not "apps". We map app → service principal → grant request |
+| 2 | **Failing early and legibly**: undeclared dataset errors in CI and at startup | UC fails at query time, in production, with `PERMISSION_DENIED on table x` |
+| 3 | **Alias indirection**: `hr.headcount` → `hr_dev.people.headcount` \| `hr_prod.people.headcount` | UC's three-level name *contains* the environment, so portable tenant SQL needs a layer above it |
+| 4 | **Identity bridging**: carrying the end user from a browser session into Databricks | The gap between a web session and a warehouse principal is exactly what nobody supplies |
+| 5 | **Correlation**: joining "request R by user U in app A" to "Databricks query Q" | UC's audit knows the query and the principal. Only we know the app and the request |
 
-**Chosen: (b).**
+**In one line:** *Unity Catalog owns the data. We own the application platform, and the bridge.*
 
-(a) collapses the audit trail at exactly the moment it matters. (c) is stronger, and is where a
-mature platform ends up — but it requires the data engine to mirror corporate identity (every
-employee, every group) and the platform to broker a token exchange per request. That is a
-programme, not a feature, and it is the wrong first thing for a team of three.
+### 3. No stored data credential exists
 
-**What (b) costs, stated plainly:** authorization *inside* a dataset is the platform's job — via
-the entitlement check and masking rules — not the warehouse's. If the broker has a bug, the
-warehouse will not catch it. That is a single point of failure, and it is why the broker is the
-most heavily tested module in the SDK and why it fails closed on every ambiguity.
+The sharpest objection to any platform like this is: *if the platform team manages the
+credentials, the platform team can read the data.* The answer is not to guard the credential
+better. It is to **not have one**.
 
-**Triggers for (c)**, in the order they are likely to fire:
+| | Interactive app | Scheduled job |
+|---|---|---|
+| Who does UC see? | **the actual person** | the app's service principal |
+| How the token is obtained | OAuth token exchange from their session — Databricks federates to the same Entra | **Workload identity federation** from the ECS task role (OIDC) |
+| Secret stored anywhere? | **No** | **No** — federation, not a client secret |
+| What a platform engineer can read | **nothing — there is nothing to read** | **nothing** |
+| Who enforces column and row access | Unity Catalog, per person | Unity Catalog, per principal |
 
-1. **An enterprise data platform with its own identity and grant model arrives.** This is the big
-   one, and it dissolves the objection above rather than outweighing it: the reason we rejected
-   per-user passthrough is that the engine would have to mirror corporate identity — a governed
-   data platform *already does*. At that point (c) stops being a programme and becomes an
-   integration, and we should take it.
-2. The first dataset where two users of the *same* app must see different rows for a reason we
-   cannot express as a masking rule.
-3. A compliance requirement that row-level policy be enforced by the data platform itself rather
-   than by us.
+Per-user tokens are the part that matters. Unity Catalog applies *Dana's* masks to Dana's
+query, so the platform cannot see compensation by impersonating an app — the app holds no
+standing credential to impersonate. A platform engineer who genuinely needs tenant rows must
+obtain a **UC grant from the data owner**, recorded in UC's audit, which we cannot edit.
 
-#### Where the credential actually sits — and the hole that leaves
+The residual, stated plainly: AWS Secrets Manager still holds genuinely external secrets, such
+as a third-party API key. Those carry a resource policy granting only the app's task role, and
+a KMS key policy that **explicitly denies the platform role**, so we cannot self-serve even
+holding admin.
 
-Worth stating before a reviewer finds it. The broker is an in-process library (alternative C
-below), so the credential is injected into **the tenant's own container** and is reachable from
-the tenant's own process. A determined tenant could read it out of the environment and open a
-connection we never see.
+### 4. Two keys for sensitive data
 
-We accept this, for one reason and with one mitigation:
-
-* **The reason** is the threat model the brief handed us. Doing that is not a mistake anyone makes
-  by accident — it is a deliberate act by an employee, against a platform with observability and
-  organisational recourse. It is a conversation with a manager, not a control failure.
-* **The mitigation** is that it is *loud*. Every legitimate read produces an audit record; a read
-  through a side channel produces none, while the app's own logs keep flowing. An app that queries
-  data it never audits is a detectable pattern, and it is the one alert worth writing early.
-
-**The fix, when the threat model changes:** move the broker into a sidecar in the same pod. The
-credential lives in the sidecar, the tenant process talks to it over localhost, and the tenant
-never holds it. That buys process isolation without the cost of the platform-wide data service in
-alternative C. **Trigger:** any tenant that is not a team of employees, or the first credential
-whose misuse would be a reportable event rather than an internal one.
-
-### 4. For restricted data, two keys
-
-The tenant declares the dataset in its repo (intent). The **dataset owner** grants it in the
-platform registry (approval). Neither alone is sufficient: declaring a restricted dataset you have
-not been granted fails in CI, and fails again at runtime if CI is bypassed.
-
-**Classification lives in the platform catalog and never in `app.yaml`.** A tenant cannot downgrade
-the sensitivity of its own data by editing a file in its own repository. This is a ten-line
-implementation detail and the single most defensible control in the design.
+The tenant declares the dataset in its repo (intent). The **data owner** grants it in Unity
+Catalog (approval). Neither alone is sufficient: declaring a dataset you have not been granted
+fails in CI, where we check UC, and again at query time, where UC refuses.
 
 ### 5. There is no data discovery, and that is deliberate
 
-`catalog.yaml` is an **access registry, not a data catalog.** It records what connections exist,
-what sits behind them, who owns them, and how sensitive they are — the minimum the broker needs in
-order to enforce. It has no search, no schema browser, no lineage, no sample rows, and no
-descriptions beyond a single line.
+Our registry is an **access registry, not a data catalog**: a nickname, its environment
+mapping, and an owner to route a request to. No search, no schema browser, no lineage.
 
-`insights datasets` shows a team what it already has, plus the name and owner of datasets it could
-request. **Finding out what data exists is a conversation with a data owner, not a platform
-feature.** At five teams — and at twenty-five — that conversation is cheap, and it is also where
-the governance actually happens: the owner learns who wants their data and why.
+Discovery, when it is wanted, belongs in **Unity Catalog**, which already has search, lineage
+and column-level metadata governed by the same grants. Building a second discovery surface in
+the app platform would mean storing a description of compensation data's shape for teams that
+cannot read it — new exposure, no benefit, and the first thing a compliance partner would ask
+us to justify.
 
-Building discovery would mean the platform stores a description of compensation data's shape for
-the benefit of teams that cannot read it. That is new exposure for no benefit, and it would be the
-first thing the compliance partner asks us to justify.
+### 6. What this draws: the isolation line
 
-**Trigger to revisit:** the dataset count exceeds what an owner can hold in their head (call it
-~50), or onboarding is repeatedly blocked on *"who do I even ask?"*. Note that in both cases the
-right answer is probably **not** for this platform to build discovery — see below.
+Isolation here is almost entirely a question about **data**. Runtime, ALB, CI, base images and
+log sink are shared by every tenant and nobody finds that controversial. So the tier follows
+the **data's classification, not the tenant's identity** — and the classification lives in a UC
+tag, which a tenant cannot edit.
 
-### 6. This registry is a projection, and it is shaped to be replaced
-
-`catalog.yaml` holds classification, owner, physical location, masking rules and sensitive field
-names — and deliberately nothing else. That is not a minimal-viable-catalog; it is **exactly the
-subset that a governed enterprise data platform would publish**, and no more.
-
-We wrote it this way because the end state is not for Insights Hub to own a governance model.
-Governance belongs in the data platform. A three-person team maintaining a second, divergent
-source of truth for who owns compensation data is a liability, and the day the organisation has a
-real catalog, ours should stop being authoritative and start being a cache.
-
-**The migration is one function.** Everything in the broker goes through `catalog.resolve(alias,
-env) -> Resolved`. Replacing the YAML with a client against a real catalog changes that call and
-nothing else: entitlement, masking, audit, redaction assertions and the two-key grant model all
-keep working against whatever `resolve` returns. Keeping that seam narrow is the point of the
-design, not an accident of it.
-
-**Why we did not just integrate one now:** the brief gives us a stubbed warehouse and a stubbed
-REST API, and no catalog. Building a fake catalog to defer to would produce plumbing and no
-decision — and it would dodge the question actually asked, which is where *we* draw the line.
-Federating to a real one is in ADR-005's trigger list.
-
-## What this draws: the isolation line
-
-Isolation in this platform is almost entirely a question about **data**. Runtime, edge, CI, base
-image, registry and log sink are shared by every tenant and nobody finds that controversial. The
-broker is the only place a real boundary has to be drawn — so the tier follows the *data*, not the
-tenant.
-
-| | Standard tier (default) | Restricted tier |
+| | Standard | Restricted (UC tag `sensitivity=restricted`) |
 |---|---|---|
-| Triggered by | everything else | any dataset classified `restricted` in the catalog |
 | Process | own container per app | own container per app |
-| Data path | shared broker | shared broker **+ dataset-owner grant** |
+| Data path | brokered, per-user token | brokered, per-user token **+ dataset-owner grant in UC** |
+| Column/row access | UC grants | **+ UC column masks and row filters** |
 | Telemetry | redaction enforced at emit | **+ emit-time assertion that no restricted field name appears** |
-| Operator access | standing read on platform telemetry | **no standing access to rows** — break-glass only (ADR-003) |
-| Approval | app owner | **dataset owner**, separately from the app owner |
+| Operator access | standing read on platform telemetry | **none to rows** — a UC grant from the owner, audited by UC |
 
-**Shared by everyone:** the runtime, the edge, the broker, the registry, the log sink, the CI
-pipeline, the base image.
-**Shared by nobody:** their process, their data scope, their app's access groups — and their
-credentials, because they have none.
+> **Why not tier by tenant:** sensitivity travels with the data, not the team reading it. If
+> People Ops gained compensation access tomorrow, tenant-based tiering would give that access
+> standard-tier treatment — exactly backwards.
+
+**Shared by everyone:** the VPC, the cluster, the ALB, the broker, the base images, the CI
+pipeline, the Databricks workspace.
+**Shared by nobody:** their process, their task role, their UC grants, their log group and
+dashboard — and their credentials, because they have none.
 
 ## The tension
 
 **Operability versus assurance**, and it cuts twice.
 
-This is **soft isolation** and we say so. Apps share a kernel, a broker and a control plane. If the
-threat model were a hostile tenant, this design would be wrong and the answer would be per-tenant
-infrastructure — which two to three engineers cannot run for twenty-five tenants. The brief's
-sentence about employees and organisational recourse is the licence. **The restricted tier buys
-least privilege and evidence, not a stronger wall** — and telling a compliance partner otherwise
-would be the real failure.
+This is **soft isolation** and we say so. Apps share a kernel, a cluster and a control plane. If
+the threat model were a hostile tenant this design would be wrong, and the answer would be
+per-tenant infrastructure — which two to three engineers cannot run for twenty-five tenants. The
+brief's sentence about employees and organisational recourse is the licence. **The restricted
+tier buys least privilege and evidence, not a stronger wall**, and telling a compliance partner
+otherwise would be the real failure.
 
-The second cut is newer and sharper: **the platform now holds every credential.** A platform
-engineer with production deployment access can reach one. ADR-003's zero-standing-access model
-constrains the *supported* path, not physics. What we can honestly claim is that there is exactly
-one audited path to data and that reaching any other path requires actions that are themselves
-visible. What we cannot claim is that it is impossible. We chose the claim we can defend.
+The second cut is the one that changed our mind: **owning a governance model is a liability, not
+an asset.** Writing masking rules in our own YAML was faster, entirely under our control, and
+wrong — because it would have been enforced only on our path, drifted from the data platform's
+model, and doubled the surface a reviewer has to check. Delegating to Unity Catalog costs us
+control and couples us to Databricks. We took that trade deliberately.
 
 ## Alternatives considered
 
@@ -272,110 +179,110 @@ likes. This is what most people mean by "shared data connections", it is the che
 build, and it is what a tenant would *prefer*.
 
 **Why not.** It shares the **credential**, so every app that can reach the warehouse can read
-compensation data. Entitlement degrades to documentation. The audit answers "an app read
-something", not "which app read what". Masking becomes impossible because there is no chokepoint
-to apply it at. And the compliance partner's first question — *"what stops the headcount dashboard
-from selecting salaries?"* — has no answer except "they wouldn't."
+compensation. Entitlement degrades to documentation. The audit answers "an app read something",
+not "which app read what, for whom". And the compliance partner's first question — *"what stops
+the headcount dashboard from selecting salaries?"* — has no answer except "they wouldn't."
 
-Rejecting this is the decision the rest of the design rests on, which is also why `ONBOARDING.md`
-has to earn its keep: the narrow API must feel like a service, not a restriction.
+### B. Own the governance model ourselves *(what we built first, and removed)*
 
-### B. Per-user credential passthrough
+Classification, masking rules and grants in our own registry, enforced by our broker. This was
+the previous version of this ADR.
 
-The end user's identity reaches the data engine; the engine enforces row-level policy.
+**Why not.** Three failures, in increasing order of seriousness. It is enforced **only on our
+path** — a notebook against the same table obeys none of it. It is a **second source of truth**
+beside Unity Catalog, and it will drift without anyone noticing which is right. And it gives a
+compliance reviewer **two models to audit** instead of one, while being the less authoritative
+of the two. Fast to build, and a liability by the second year.
 
-**Why not (yet).** Strongest model and the right end state. It needs the warehouse to mirror
-corporate identity and a token exchange on every request — a programme, not a feature. Trigger
-named in §3.
+### C. Service principal per app, no per-user identity
 
-### C. A data API service instead of an in-process broker
+Every app authenticates to Databricks as itself. Much simpler: no token exchange.
 
-Same enforcement, but behind HTTP: apps call a platform data service rather than importing a
-library.
+**Why not.** Unity Catalog then sees the app, never the person, so per-user column masks and
+row filters cannot apply and the audit answers "comp-report read this" rather than "Dana did".
+For a scheduled job that is correct and it is what we do. For an interactive app it throws away
+the main reason to have a governed data platform at all.
+
+### D. A data API service instead of an in-process broker
+
+Same enforcement, behind HTTP: apps call a platform data service rather than importing a library.
 
 **Why not.** It buys one real thing — language independence — at the cost of a network hop, a
 service to run and be paged for, and a *second* identity problem (the app authenticating to the
-data service). We already control the runtime, so we get the same guarantee in-process for free.
-**Trigger:** the first tenant that is not on our language stack. ADR-005 carries this.
+data service). We already control the runtime, so we get the same guarantee in-process.
+**Trigger:** the first tenant that is not on our language stack (ADR-005).
 
-### D. Per-tenant infrastructure — separate compute, network and data path per team
+### E. Per-tenant infrastructure — separate compute, network and data path per team
 
 The strongest isolation available, and what we would build if tenants were untrusted.
 
 **Why not.** Twenty-five tenants times the cost of a dedicated stack, against a team of two to
-three. It would consume the platform team entirely and leave nothing for onboarding, which is the
-platform's actual job.
+three. It would consume the platform team entirely and leave nothing for onboarding, which is
+the platform's actual job.
 
-### E. A separate deployment for People Analytics only
+### F. A separate deployment for People Analytics only
 
 Cheap in the short run: one tenant is special, so give that tenant its own everything.
 
 **Why not.** It solves one instance, not the class. The second sensitive dataset — and on an
-HR-adjacent platform there will be one — restarts the argument from scratch, and by then there is
-a precedent for bespoke arrangements. Tiering by classification generalises: the next restricted
-dataset gets the right treatment with no negotiation.
-
-### F. Tier by tenant rather than by dataset
-
-**Why not.** Sensitivity travels with the data, not with the team reading it. If People Ops were
-granted `hr.compensation` tomorrow, tenant-based tiering would give that access standard-tier
-treatment — exactly backwards.
+HR-adjacent platform there will be one — restarts the argument from scratch, and by then there
+is a precedent for bespoke arrangements.
 
 ### G. No tiering at all
 
 **Why not.** One uniform level is wrong in both directions: set it low and compensation is
-under-protected; set it high and every dashboard inherits owner approval and break-glass, which
-makes the platform unusable for the other twenty-four tenants.
+under-protected; set it high and every dashboard inherits owner approval, which makes the
+platform unusable for the other twenty-four tenants.
 
 ## Consequences
 
 **What we now have to do**
 
-* Treat `catalog.yaml` as a **control surface**, not configuration: its own review path, because
-  classification is a security decision expressed as YAML.
-* Enforce in CI that a manifest can never declare or override classification.
-* Build the dataset-owner grant path — a second approver is a workflow, not a flag.
-* Own every engine adapter. A tenant that needs a data source we do not support is **blocked on
-  us**, and that queue is the platform team's main scaling risk.
+* Operate the **bridge**: token exchange for interactive apps, workload identity federation for
+  jobs. This is the part with real engineering in it, and the part that breaks in interesting ways.
+* Keep the registry a **projection** of Unity Catalog and prove it stays one — a drifted
+  projection is worse than no projection, because people trust it.
+* Own every engine adapter. A tenant needing a data source we do not support is **blocked on us**,
+  and that queue is the platform team's main scaling risk.
 
 **What gets harder**
 
-* The narrow API will not fit something, and the first time it does not, the tenant's options are
-  a platform change or nothing. We keep that deliberate: the escalation path is a platform ticket,
-  **not a tenant escape hatch**, and the frequency of those tickets is the signal that the API is
-  wrong.
-* Adding a restricted dataset now costs an approval path, redaction assertions and break-glass.
-  That friction is the point, but it is friction.
-* Two tiers is the maximum this design should carry. A third means the model is wrong.
+* We are now **coupled to Databricks** for governance. If the organisation moved data platforms,
+  this ADR is void — not adjustable.
+* Debugging a permissions problem now spans two systems. "It worked yesterday" can mean a UC
+  grant changed, and we don't own that. The error path has to name which system said no.
+* The narrow API will not fit something eventually. The escalation is a platform ticket, **not a
+  tenant escape hatch**, and the frequency of those tickets is the signal the API is wrong.
 
 **What to watch — and what invalidates this ADR**
 
-* **A tenant that is not a team of employees** — contractors, a joint venture, an acquired company
-  under a separate legal entity. Any of these removes the organisational-recourse premise, and
-  this ADR must be reopened rather than stretched.
-* A regulatory obligation naming physical or network separation.
-* A broker bug: because the warehouse trusts us, a defect here is a data incident, not a 500.
+* **A tenant that is not a team of employees** — contractors, a joint venture, an acquired
+  company. This removes the organisational-recourse premise and the ADR must be reopened rather
+  than stretched.
+* A broker bug: because the data platform trusts our token exchange, a defect here is a data
+  incident, not a 500.
 * Honest limitation kept in view: apps share a kernel and a control plane, so a container escape
   is a cross-tenant event. We state that rather than implying otherwise.
 
-**What the compliance partner will still ask for, and our answer**
+**What the compliance partner will ask, and our answer**
 
-Row-level access control enforced inside the warehouse (§3 alternative B), and evidence of
-periodic access review. Neither is built. Both are correct asks, and both sit in ADR-005's trigger
-list rather than being quietly omitted. What we *can* hand them today is
-`insights compliance-report --dataset hr.compensation`: who is entitled, who granted it, every
-read in the period, and every break-glass event.
+*"Who enforces column-level access?"* — Unity Catalog, per person, on every path to the data
+including notebooks; not our code. *"Can the platform team read compensation?"* — there is no
+standing credential to use; access requires a UC grant from the data owner, recorded in UC's
+audit, which we cannot edit. *"Evidence of periodic access review?"* — **not built.** A correct
+ask, and it sits in ADR-005's trigger list rather than being quietly omitted.
 
 ## Revisit when
 
-* **A tenant is not a team of employees** — a contractor team, a joint venture, an acquired
-  company under a separate legal entity. This removes the organisational-recourse premise the
-  whole ADR rests on, and it must be reopened rather than stretched.
-* **A governed enterprise data platform arrives.** Our registry should stop being authoritative
-  and become a cache (§6), and per-user passthrough stops being a programme (§3).
+* **A tenant is not a team of employees** — the organisational-recourse premise is gone, and
+  this ADR must be reopened rather than stretched.
+* **The organisation moves off Databricks**, or stands up a second governed data platform. The
+  delegation in §2 is the whole design; it does not survive two governance models.
 * **"Can the platform add X" becomes a stream rather than a trickle.** The narrow API is then
-  wrong, and the answer is alternative C — a data service other languages can reach — not an
+  wrong, and the answer is alternative D — a data service other languages can reach — not an
   escape hatch.
+* **Token exchange becomes the top source of incidents.** The bridge is the riskiest thing we
+  own; if it is fragile, per-app service principals (alternative C) plus UC row filters keyed on
+  a passed-through user attribute is the fallback, and it is worse but simpler.
 * **Someone proposes a third tier.** Two is the maximum this model should carry; a third means
   the tiering dimension itself is wrong.
-* A regulatory obligation names physical or network separation.
