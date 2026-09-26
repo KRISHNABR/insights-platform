@@ -132,7 +132,7 @@ platform supplies the right base image, identity plumbing and health contract fo
 | **`dashboard`** *(default)* | FastAPI + Jinja | handlers + one template | A table, a filter, a chart. **Most apps** |
 | **`api`** | FastAPI | handlers returning JSON | An internal API other apps or agents call |
 | **`spa`** | FastAPI + static files | backend handlers **and** their own built bundle in `static/` | Frontend + backend, bespoke interaction |
-| **`streamlit`** | Streamlit | one `app.py` | Exploratory dashboards, data-science teams |
+| **`streamlit`** | Streamlit | one `entrypoints.py` | Exploratory dashboards, data-science teams |
 
 ```yaml
 # app.yaml
@@ -741,10 +741,10 @@ The last column is the honest measure of whether the recommendation is reachable
 | Sign-in | `?as=` sets a cookie | ALB OIDC action → Entra ID | `edge/main.py` — verify a signed JWT instead of reading a cookie |
 | Identity into the app | edge injects headers + a shared token | ALB injects `x-amzn-oidc-data` | `identity.from_headers()` — verify a signature; **everything downstream unchanged** |
 | App authorization | manifest roles → groups | same, from Entra via SCIM | nothing |
-| Warehouse | SQLite file | Databricks SQL Warehouse | `engines.py` — one adapter class |
+| Warehouse | SQLite file | Databricks SQL Warehouse | `adapters.py` — one adapter class |
 | Data governance | broker applies `local_masking` | **Unity Catalog** masks and row filters | `data._mask()` returns early; UC does it |
-| Data credential | env var the CLI injects | **OAuth federation — no stored secret** | `engines.py` — token exchange or workload identity |
-| Who the data platform sees | the app | **the signed-in person** | `engines.py` — the same function |
+| Data credential | env var the CLI injects | **OAuth federation — no stored secret** | `adapters.py` — token exchange or workload identity |
+| Who the data platform sees | the app | **the signed-in person** | `adapters.py` — the same function |
 | Internal REST API | stdlib stub | the real service via PrivateLink | base URL, from the registry |
 | Deployment | `./dev up` | GitHub OIDC → ECR → ECS | the reusable workflow |
 | Scheduling | Python cron matcher | EventBridge Scheduler → ECS RunTask | `runtime/scheduler/` — replaced, not adapted |
