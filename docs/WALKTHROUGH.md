@@ -58,7 +58,8 @@ edge on http://localhost:8080
 logs     uv run insights logs --app headcount-dashboard --startup
 ```
 
-> Port 8080 busy? `uv run insights up --port 9000` and add 920 to the app ports.
+> Port 8080 busy? `uv run insights up --port 9000`. The app and stub ports follow, and
+> `up` records where they landed so `insights run` in another terminal agrees with it.
 
 **✅ Check:** open the console URL. Four tabs: Apps, Connections, Runs, Telemetry.
 The header shows `suraj@corp.example · MG-PLATFORM` — that came from the edge, not
@@ -409,6 +410,10 @@ uv run insights connections --probe
     probe     FAILED (network)
               connection 'people-directory' (rest): could not reach the host.
 ```
+
+`--probe` does a real round trip — `SELECT 1` for a SQL engine, a request to
+`base_url` for REST. Without one it would report "connected" for a host that does not
+exist, because `connect()` only builds the object and resolves the credential.
 
 The message says **who fixes it**: `auth` and `not_found` are yours, `tls` and
 `network` are usually the platform's.
