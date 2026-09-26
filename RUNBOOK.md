@@ -50,7 +50,7 @@ You cannot grant it. Route them to the **dataset owner** — that separation is 
 insights access request --dataset hr.compensation --reason "quarterly equity review"
 
 # the DATA OWNER runs (never us):
-insights access approve --dataset hr.compensation --app comp-report --approver sam@corp.example
+insights access approve --dataset hr.compensation --app comp-report --approver vidya@corp.example
 ```
 
 If someone pushes back that this is slow, the answer is that it is *meant* to be slow in

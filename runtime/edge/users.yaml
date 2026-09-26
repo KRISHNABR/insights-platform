@@ -10,19 +10,19 @@ users:
     name: Krishna Murari
     groups: [MG-PEOPLE-OPS, headcount-viewer]
 
-  sam@corp.example:
-    name: Sam Whitfield
+  vidya@corp.example:
+    name: Vidya Raman
     # Owns the restricted dataset and holds the role that unmasks it.
     groups: [MG-PEOPLE-ANALYTICS, comp-analyst]
 
-  raj@corp.example:
-    name: Raj Mehta
+  lokesh@corp.example:
+    name: Lokesh Iyer
     # Deliberately NOT a comp-analyst. Reaches the restricted dataset, sees it masked.
-    # He is the proof that entitlement and field-level access are different questions.
+    # They are the proof that entitlement and field-level access are different questions.
     groups: [MG-PEOPLE-ANALYTICS]
 
-  priya@corp.example:
-    name: Priya Nair
-    # Platform team. Note what she does NOT have: membership of any tenant's groups,
+  suraj@corp.example:
+    name: Suraj Pillai
+    # Platform team. Note what they do NOT have: membership of any tenant's groups,
     # and no standing access to any dataset (ADR-003).
     groups: [MG-PLATFORM]

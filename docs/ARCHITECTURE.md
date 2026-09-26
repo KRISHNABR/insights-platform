@@ -488,10 +488,10 @@ credentials, they can read the data.* The answer is to make sure **no credential
 ```mermaid
 flowchart TB
   subgraph I["Interactive app — a real person is present"]
-    U["Krishna signs in via Entra"] --> S["her session"]
+    U["Krishna signs in via Entra"] --> S["their session"]
     S --> TE["token exchange<br/>(Databricks federates to the same Entra)"]
     TE --> UT["a short-lived token <b>for Krishna</b>"]
-    UT --> UC1["Unity Catalog sees krishna@corp.example<br/>applies HER grants, masks and row filters"]
+    UT --> UC1["Unity Catalog sees krishna@corp.example<br/>applies THEIR grants, masks and row filters"]
   end
   subgraph J["Scheduled job — nobody is present"]
     TR["ECS task role"] --> WIF["workload identity federation<br/>(OIDC, no client secret)"]
@@ -503,7 +503,7 @@ flowchart TB
 | | Interactive | Scheduled job |
 |---|---|---|
 | Who does UC see? | **the actual person** | the app's service principal |
-| Where does the token come from? | OAuth token exchange from her session | **Workload identity federation** from the ECS task role |
+| Where does the token come from? | OAuth token exchange from their session | **Workload identity federation** from the ECS task role |
 | Is a secret stored anywhere? | **No** | **No** — federation, not a client secret |
 | Can a platform engineer read it? | **There is nothing to read** | **There is nothing to read** |
 | Who enforces column/row access? | Unity Catalog, per person | Unity Catalog, per principal |
@@ -641,7 +641,7 @@ curl -b cookies.txt -H "X-Auth-Groups: comp-analyst" \
      http://localhost:8080/a/headcount-dashboard/api/me
 
 # 3 · wrong role → 403, naming the ADR
-#     sam@corp.example is not a headcount-viewer
+#     vidya@corp.example is not a headcount-viewer
 
 # 4 · run the job; watch the audit record and the declared output appear
 cd ../insights-comp-report && ../insights-platform/dev run

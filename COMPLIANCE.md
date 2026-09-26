@@ -47,13 +47,13 @@ which is what makes everything below enforceable rather than aspirational.
 DATASET  hr.compensation      sensitivity: restricted (UC tag)     owner: MG-PEOPLE-ANALYTICS
 
 APPS WITH ACCESS
-  comp-report                  granted 2026-09-20 by sam@corp.example
+  comp-report                  granted 2026-09-20 by vidya@corp.example
 
 ACCESS IN PERIOD                                      2 reads
   2026-09-26T06:00:02Z  comp-report            svc:comp-report          4 rows
 
 OPERATOR ACCESS                                       0 standing · 1 break-glass
-  2026-09-24  priya@corp.example  approved by sam@corp.example  [expired]
+  2026-09-24  suraj@corp.example  approved by vidya@corp.example  [expired]
               used 1x · tenant notified: True
 
 REDACTION ASSERTIONS                                  active, 0 violations

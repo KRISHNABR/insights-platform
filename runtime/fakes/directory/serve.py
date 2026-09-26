@@ -16,9 +16,9 @@ from urllib.parse import parse_qs, urlparse
 
 PEOPLE = [
     {"email": "krishna@corp.example", "name": "Krishna Murari", "dept": "People Ops"},
-    {"email": "sam@corp.example", "name": "Sam Whitfield", "dept": "People Analytics"},
-    {"email": "raj@corp.example", "name": "Raj Mehta", "dept": "People Analytics"},
-    {"email": "lena@corp.example", "name": "Lena Fischer", "dept": "Engineering"},
+    {"email": "vidya@corp.example", "name": "Vidya Raman", "dept": "People Analytics"},
+    {"email": "lokesh@corp.example", "name": "Lokesh Iyer", "dept": "People Analytics"},
+    {"email": "kishore@corp.example", "name": "Kishore Nambiar", "dept": "Engineering"},
 ]
 
 

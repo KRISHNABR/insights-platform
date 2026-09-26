@@ -29,9 +29,9 @@ HEADCOUNT = [
 # the masking rules and the telemetry assertions in the catalog are written against these.
 COMPENSATION = [
     (1, "Krishna Murari", "People Ops", 94000, 8.0),
-    (2, "Sam Whitfield", "People Analytics", 112000, 12.0),
-    (3, "Raj Mehta", "People Analytics", 101500, 10.0),
-    (4, "Lena Fischer", "Engineering", 138000, 15.0),
+    (2, "Vidya Raman", "People Analytics", 112000, 12.0),
+    (3, "Lokesh Iyer", "People Analytics", 101500, 10.0),
+    (4, "Kishore Nambiar", "Engineering", 138000, 15.0),
 ]
 
 PIPELINE = [

@@ -124,13 +124,13 @@ jobs:
           curl -s -b "$J" "$B/api/headcount?month=2026-09" | grep -q 'Engineering' \
             && ok "Reads the warehouse through the broker" "rows" || no "warehouse read failed"
 
-          curl -s -b "$J" "$B/api/team?dept=Engineering" | grep -q 'lena@corp.example' \
+          curl -s -b "$J" "$B/api/team?dept=Engineering" | grep -q 'kishore@corp.example' \
             && ok "Reads the internal REST API" "rows" || no "REST read failed"
 
           curl -s -b "$J" "$B/healthz" | grep -q '"status":"ok"' \
             && ok "Health resolves every declared dataset" "ok" || no "health check failed"
 
-          curl -s -L -c "$RUNNER_TEMP/j2" -b "$RUNNER_TEMP/j2" "$B/?as=sam@corp.example" -o /dev/null
+          curl -s -L -c "$RUNNER_TEMP/j2" -b "$RUNNER_TEMP/j2" "$B/?as=vidya@corp.example" -o /dev/null
           curl -s -b "$RUNNER_TEMP/j2" "$B/api/headcount" | grep -q 'not a member' \
             && ok "A trusted caller without the role is refused" "403" || no "wrong role was allowed"
 
