@@ -8,10 +8,12 @@ repository rather than about what the code does at runtime. ADR-004's placement 
   * declaring classification -> config.py rejects it at runtime too; CI stops it shipping
   * an unsupported SDK floor -> only knowable against the platform's support window
   * secrets in the repo      -> nothing at runtime can un-leak a committed secret
-  * a pinned base image tag  -> `:latest` breaks the one-rebuild CVE story
+  * a pinned base image tag  -> `:latest` means the build is not reproducible
+  * a container running root -> nothing at runtime can undo a root breakout
 
-Deliberately NOT here: anything about data access. Entitlement and grants are checked
-here AND at runtime, because CI can be bypassed and the runtime cannot.
+Deliberately NOT here: whether a connection actually works. The deploy runner is not
+in the app's network and does not hold the app's credential - by design. Reachability is
+`/healthz`'s job, from where the app runs. This checks shape.
 """
 
 from __future__ import annotations
@@ -26,12 +28,12 @@ from packaging.version import Version
 
 try:  # in CI the SDK is pip-installed, which is the path that matters
     from insights_sdk import SUPPORTED_VERSIONS, config
-    from insights_sdk.cli.scaffold import BASE_VERSIONS
+    from insights_sdk.connectors import SUPPORTED_ENGINES
     from insights_sdk.errors import InsightsError
 except ModuleNotFoundError:  # locally the four repos just sit side by side
     sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "insights-sdk" / "src"))
     from insights_sdk import SUPPORTED_VERSIONS, config
-    from insights_sdk.cli.scaffold import BASE_VERSIONS
+    from insights_sdk.connectors import SUPPORTED_ENGINES
     from insights_sdk.errors import InsightsError
 
 SECRET_PATTERNS = [
@@ -77,20 +79,23 @@ def main() -> int:
     if manifest.app != args.app:
         fail(f"manifest says app '{manifest.app}' but the workflow was called with '{args.app}'")
 
-    # 2. every declared dataset exists, and restricted ones are granted
-    catalog, grants = config.load_catalog(), config.load_grants()
-    for request in manifest.datasets:
-        try:
-            resolved = catalog.resolve(request.dataset)
-        except InsightsError as exc:
-            fail(f"dataset {request.dataset}: {exc}")
-            continue
-        if resolved.restricted and not grants.for_identity(request.dataset, manifest.service_identity):
-            fail(
-                f"{request.dataset} is restricted and not granted to {manifest.service_identity}. "
-                f"We cannot grant it here - {resolved.dataset.owner} owns the data and grants it "
-                f"in the data platform. This gate only checks that they already did."
-            )
+    # 2. every connection names a supported engine and references a secret by NAME
+    #
+    # What this can and cannot check is worth stating. It cannot check that the host
+    # is reachable from the deploy runner, or that the credential is valid - the
+    # runner is not in the app's network and must not hold the app's credential. It
+    # checks the shape, and `/healthz` checks reachability from where the app runs,
+    # which is the only place that answer is meaningful.
+    for spec in manifest.connections:
+        if spec.engine not in SUPPORTED_ENGINES:
+            fail(f"connection '{spec.name}' uses engine {spec.engine!r}. "
+                 f"Supported: {', '.join(SUPPORTED_ENGINES)}.")
+        for key, value in spec.options.items():
+            if isinstance(value, str) and re.search(
+                r"(?i)(password|secret|token|api[_-]?key)\s*[:=]", value
+            ):
+                fail(f"connection '{spec.name}' option {key!r} looks like it embeds a "
+                     f"credential. Use `secret: <name>`.")
 
     # 3. the SDK version is inside the support window (ADR-001, N-2)
     #
@@ -142,7 +147,7 @@ def main() -> int:
     if not dockerfile.is_file():
         fail(
             "no Dockerfile. `insights new-app` generates one and it belongs to your "
-            "repo - run `insights build --show` to see what it should look like."
+            "repo - `insights build --write` writes it if you have lost it."
         )
     else:
         lines = [ln.strip() for ln in dockerfile.read_text().splitlines()]
@@ -151,47 +156,27 @@ def main() -> int:
 
         if not froms:
             fail("Dockerfile has no FROM")
-        else:
-            # (a) every stage must build on a base the platform publishes. A stage
-            #     FROM docker.io is a base nobody here is patching.
-            for line in froms:
-                image = line.split()[1]
-                if not image.startswith("insights-hub/"):
-                    fail(
-                        f"Dockerfile builds on {image!r}. Every stage must start from a "
-                        f"published insights-hub base - those are the ones we patch. "
-                        f"Run `insights runtimes` for the list."
-                    )
-                # (b) an image you cannot name is one you cannot roll back to.
-                elif image.endswith(":latest") or ":" not in image:
-                    fail(f"Dockerfile uses {image!r}. Pin a base version; :latest is not rollback-able.")
+        for line in froms:
+            image = line.split()[1]
+            if "${" in image:
+                continue                      # a build ARG; we cannot resolve it here
+            # An image you cannot name is one you cannot roll back to, and `latest`
+            # means the build is not reproducible.
+            if image.endswith(":latest") or (":" not in image and "@" not in image):
+                fail(f"Dockerfile uses {image!r}. Pin the base - :latest is not rollback-able.")
 
-            # (c) the FINAL stage must not end up as root. Note the base images already
-            #     set `USER insights`, so a tenant file with no USER line is correct -
-            #     the check is "if you switched to root, switch back", not "declare it".
-            if users and users[-1].split()[1] in ("root", "0"):
-                fail(
-                    "Dockerfile's last USER is root. Install as root if you must, but "
-                    "switch back - a container breakout should land on a user that owns nothing."
-                )
-
-            # (d) the pinned base version must still be the current published one.
-            #
-            # Checked against the FROM line alone. There used to be a `runtime.base`
-            # in app.yaml and a rule that the two must AGREE - which is the smell:
-            # a reconciliation between two sources of truth that should have been one.
-            final_from = froms[-1].split()[1]
-            base, _, pinned = final_from.partition("insights-hub/")[2].partition(":")
-            current = BASE_VERSIONS.get(base)
-            if base and current is None:
-                fail(f"Dockerfile builds on {final_from!r}, which is not a published base. "
-                     f"Run `insights runtimes` for the list.")
-            elif current and pinned != current:
-                fail(
-                    f"Dockerfile pins {base}:{pinned}, but {current} is current. "
-                    f"Base images carry the OS and interpreter patches - because this file "
-                    f"is yours, that fix reaches you only when you bump this line."
-                )
+        # The final stage must not end up as root. Install as root if you must;
+        # switch back before the end.
+        if users and users[-1].split()[1] in ("root", "0"):
+            fail(
+                "Dockerfile's last USER is root. Install as root if you need to, but "
+                "switch back - a container breakout should land on a user that owns nothing."
+            )
+        elif not users:
+            fail(
+                "Dockerfile never sets USER, so the container runs as root. Add a "
+                "non-root user - `insights build --show` has the two lines."
+            )
 
     failures = globals()["FAILURES"]
     print(f"platform gates: {'PASS' if not failures else f'{failures} failure(s)'}")
