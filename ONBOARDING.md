@@ -12,20 +12,20 @@ You will write two files. Everything else is generated or inherited.
 
 ## What you're getting, and what it costs you
 
-**What you get.** Corporate sign-in, authorization, access to shared data connections,
-a deployment pipeline, structured logs, a health check that actually checks something,
-and a base image somebody else patches.
+**What you get.** Corporate sign-in, authorization, connectors for the systems you
+already have access to, somewhere safe to keep the credential, a deployment pipeline,
+structured logs, and a health check that actually checks something.
 
-**What it costs you.** You give up choosing your own web framework, your own logging,
-and — the one people notice — **direct access to the warehouse**. You never get a
-connection string. You name a dataset and we run the query.
+**What it costs you.** You give up choosing your own web framework and your own
+logging, and you declare your connections in `app.yaml` rather than building them in
+code.
 
-That last one is the deliberate trade, so it's worth saying why up front: if we handed
-every app a warehouse connection, every app could read compensation data, and we'd have
-no way to tell you which app read what. Instead, access is per dataset, the owner of the
-data approves it, and every read is recorded. If you only ever read your own team's
-numbers, you'll never notice. If you're the team whose data everyone wants, you'll care
-a lot.
+**What it does *not* cost you: your data.** You already have access to your warehouse;
+we are not in that loop and do not want to be. We ship the connector, hold the
+credential in a store only your app's identity can read, and translate the driver's
+error into something that says who has to fix it. We never see your SQL and never see
+a row — the telemetry records that a query ran on `hr-warehouse`, took 12ms and
+returned 4 rows, and that is all it can record.
 
 **What we don't do.** There's no portal, no data catalog you can browse, and no staging
 environment yet. Those are decisions rather than gaps —
@@ -55,9 +55,40 @@ If you need both, that's two apps. They're cheap.
 
 ## 1 · Create the app (2 minutes)
 
-```bash
-pip install "insights-sdk>=0.1,<1"
+Install the CLI once, globally. There is no project yet — that is the point of this
+step — so it cannot come from a project's virtualenv:
 
+```bash
+uv tool install git+https://github.com/KRISHNABR/insights-sdk.git@v1
+```
+
+Or run it without installing anything at all:
+
+```bash
+uvx --from git+https://github.com/KRISHNABR/insights-sdk.git@v1 insights new-app ...
+```
+
+<details>
+<summary>Why the CLI ships inside the SDK, and when to use which</summary>
+
+`insights` is an entry point on the `insights-sdk` package rather than a separate
+`insights-cli`, because `insights doctor` has to validate your manifest with **exactly
+the code your app will run**. Split them and `doctor` either depends on the SDK anyway
+— two version numbers, nothing gained — or reimplements the validation, and then CI
+says fine while the runtime says no. That is the worst failure a platform can have.
+
+So there are two ways to run it, and both are correct:
+
+| | Use it for | Why |
+|---|---|---|
+| `uv tool install` (global) | `new-app` | There is no project yet |
+| `uv run insights` (in your repo) | `doctor`, `run`, `build` | Uses **your** pinned SDK, so doctor cannot disagree with your app |
+
+Inside a repo, prefer `uv run insights`. If the global CLI is on 0.3 and your app pins
+0.1, the global one would check rules your app does not follow.
+</details>
+
+```bash
 insights new-app forecast-dashboard \
   --kind web \
   --team demand-planning \
