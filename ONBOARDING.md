@@ -68,17 +68,22 @@ That generates a repository:
 
 ```
 insights-forecast-dashboard/
-├── app.yaml                     ← yours
-├── src/main.py                  ← yours
-├── Dockerfile                   generated — three lines, don't edit
-├── .github/workflows/ci.yml     generated — four lines, don't edit
+├── app.yaml                          ← yours
+├── src/main.py                       ← yours
+├── static/                           ← yours, if web.type is spa
+├── pyproject.toml                    generated — uv, with the SDK floor
+├── .github/workflows/ci.yml          generated — 4 lines
+├── .github/workflows/deploy-dev.yml  generated — 4 lines
+├── .github/workflows/deploy-uat.yml  generated — 4 lines
+├── .github/workflows/deploy-prod.yml generated — 4 lines
 └── README.md
 ```
 
-**The two files that are yours are the only two files that are yours.** The Dockerfile
-and the CI config are generated rather than copied from a template, so when we improve
-them you get the improvement by upgrading the SDK — you don't inherit a snapshot of what
-we thought was good eighteen months ago.
+**There is no Dockerfile**, and that is deliberate — you declare a runtime, you don't build an
+image. The four workflow files are four lines each and call one platform pipeline. All of it is
+**generated rather than copied from a template**, so when we improve it you get the improvement
+by upgrading the SDK; you don't inherit a snapshot of what we thought was good eighteen months
+ago. `insights upgrade-scaffold` re-renders exactly the files we own and touches nothing else.
 
 `app.yaml` is your whole contract with the platform:
 
@@ -86,18 +91,42 @@ we thought was good eighteen months ago.
 apiVersion: v1
 app: forecast-dashboard
 team: demand-planning
-kind: web
+kind: web                      # web | job
 
-owners:
-  - MG-DEMAND-PLANNING      # becomes forecast-dashboard-admin
+access:
+  # WHO MANAGES THE APP — deploys, approvals, data requests
+  manage:
+    owners:       [MG-DEMAND-PLANNING]      # approve prod; request data; answer for it
+    contributors: [MG-DEMAND-PLANNING-ENG]  # deploy dev/uat, read logs. NOT prod
+    readers:      []                        # see it in `insights status`, nothing more
+
+  # WHO MAY USE THE RUNNING APP — checked by require_role() in your code
+  roles:
+    - name: forecast-viewer
+      groups: [MG-DEMAND-PLANNING]
 
 runtime:
-  sdk: ">=0.1,<1"           # a floor, not a pin — see "Upgrades" below
+  sdk: ">=0.1,<1"              # a floor, not a pin
+  base: python-web             # `insights runtimes` lists them. We patch these
+  size: small
 
-data: []                    # datasets go here
-access:
-  roles: []                 # who may use this app
+data: []                       # dataset names; `insights datasets` shows what you can ask for
+
+web:
+  route: /forecast-dashboard
+  type: spa                    # api | spa | streamlit
+
+environments:
+  dev:  {auto_deploy: true}
+  uat:  {auto_deploy: false, approvers: contributors}
+  prod: {auto_deploy: false, approvers: owners}
 ```
+
+**The two `access` blocks answer different questions, and keeping them apart matters.**
+`manage` is *who can deploy and govern this app*. `roles` is *who can use it*. An engineer who
+can ship to uat is not thereby allowed to read what the app reads, and a person allowed to view
+the dashboard cannot deploy it. Mixing those two is the most common way an internal platform
+quietly leaks.
 
 You declare *what you need*. We decide *how it's satisfied* — which engine, which
 credential, which physical table in which environment. That's why there's nothing in
@@ -130,11 +159,16 @@ def forecast():
 
 | Layer | Question | Where it comes from |
 |---|---|---|
-| Platform membership | can this person reach any app at all? | corporate SSO |
-| App roles | can they use *this* app, or this part of it? | `access.roles` in your manifest |
+| Can they reach the app at all? | is this person in **any** group this app declared? | checked at the edge, before your code runs |
+| Can they do *this*? | `require_role("forecast-viewer")` | `access.roles` in your manifest |
+| Can the **app** read this data? | is the dataset declared, and granted by its owner? | your manifest **and** the data owner |
 
-Add a role to `access.roles` and the platform creates the group at deploy time. You
-don't create groups by hand and you don't check them by hand.
+Add a role to `access.roles` and the platform reconciles the corporate groups behind it at
+deploy time. You don't create groups by hand and you don't check membership by hand.
+
+The third row is worth reading twice: it is about the **app**, not the person. Someone with
+every permission in the company still gets nothing from an app that never declared the
+dataset.
 
 **One thing worth knowing**, because it will confuse you exactly once: if you run your
 app directly with `python main.py`, every authorization check fails. That's not a bug.
@@ -221,8 +255,10 @@ will refuse to read it — at your desk, not in production.
 
 Restricted datasets come with three things you'll notice:
 
-1. Some fields come back as `***` unless the owner granted your app the role that
-   unmasks them.
+1. Some fields come back as `***` — masked because *you* aren't entitled to them.
+   In production that masking is applied by the data platform itself (Unity Catalog
+   column masks), not by us, so it applies the same way whether you read through
+   this platform or open a notebook.
 2. Your logs are checked at write time for field names from that dataset, and the logger
    *raises* if one appears. See §5.
 3. Every read is recorded with who, what and how many rows.
@@ -294,12 +330,24 @@ the only platform rule people bump into, and it's usually once.
 git push
 ```
 
-That's it. Your four-line CI file calls our pipeline, which validates your manifest,
-checks your datasets against the registry, checks your SDK version is supported, builds
-you on the platform base image, registers you, and rolls you out.
+That's it — to **dev**. Your generated workflows do the rest:
 
-You don't maintain a pipeline. When we make deploys faster or safer, you get it on your
-next push without changing anything.
+| Workflow | When | Who approves |
+|---|---|---|
+| `ci.yml` | every PR and branch | nobody — it deploys nothing |
+| `deploy-dev.yml` | every merge to main | nobody. That's what dev is for |
+| `deploy-uat.yml` | you click Run | your **contributors** |
+| `deploy-prod.yml` | you click Run | your **owners** |
+
+Three things worth knowing:
+
+- **The image is built once, in dev.** uat and prod *promote that exact image* — they never
+  rebuild. If prod rebuilt, prod would be running code nobody tested.
+- **You cannot give yourself a production deploy.** The approver lists come from
+  `access.manage` in your manifest, not from your workflow files — which are four lines and
+  call ours.
+- **In dev your schedule is disarmed.** A job deploys to dev but won't fire on its own; run it
+  by hand with `insights run`. Nobody wants a half-finished report emailing people at 06:00.
 
 **Know it's healthy:**
 

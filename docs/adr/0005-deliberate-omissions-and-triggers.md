@@ -92,53 +92,80 @@ No failover, no formal availability target, no on-call rotation defined.
 > **Trigger:** the first tenant whose app is in a business-critical path. Before that, an SLO
 > would be a number nobody is accountable for.
 
-### 9. No data discovery — the catalog is an access registry, not a data catalog
+### 9. No data discovery in the app platform
 
-No dataset search, no schema browser, no lineage, no sample rows, no column descriptions.
-`insights datasets` tells a team what it already has, plus the name and owner of what it could
-request. Finding out what data exists is a conversation with a data owner.
+No dataset search, no schema browser, no lineage, no sample rows. `insights datasets` tells a
+team what it already has, plus the name and owner of what it could request.
 
-This one is omitted on principle as much as on budget: a discovery surface would mean the platform
-storing a description of compensation data's shape **for the benefit of teams that cannot read
-it** — new exposure, no benefit, and the first thing the compliance partner would ask us to
-justify. It also removes the governance moment where an owner learns who wants their data and why.
+The reasoning changed once governance moved to Unity Catalog, and it got stronger. Discovery is
+not missing from the *organisation* — UC has search, lineage and column-level metadata, governed
+by the same grants that control the data. Building a second discovery surface in the application
+platform would mean **storing a description of compensation data's shape for teams that cannot
+read it**, in a system with weaker controls than the one that already does this properly.
 
-> **Trigger:** the dataset count exceeds what an owner can hold in their head — call it ~50 — or
-> onboarding is repeatedly blocked on *"who do I even ask?"*. Either is a real signal; neither has
-> happened at five teams.
+> **Trigger:** none that leads back to us. If discovery is inadequate, the fix belongs in Unity
+> Catalog. The only thing that would change here is `insights datasets` linking out to the UC
+> entry for a dataset a team is already entitled to — a convenience, not a catalog.
 
-### 10. No per-user credential passthrough to the data engine, and no data API over HTTP
+### 10. No HTTP data service — the broker is an in-process library
 
-Two related things the broker does not do, both argued in ADR-002 §3 and alternative C.
+The broker only works for tenants on our language stack. A team wanting to build in Go or
+TypeScript cannot consume the platform's data path at all.
 
-The end user's identity reaches the **audit record**, not the warehouse; row-level policy is
-enforced by the platform's masking rules rather than by the engine. And the broker is an
-in-process library, not an HTTP service, so it only works for tenants on our language stack.
+*(An earlier version of this ADR also listed per-user credential passthrough here. It is no
+longer an omission: delegating governance to Unity Catalog means an interactive app exchanges
+the signed-in user's session for a short-lived token, so UC sees the actual person. That was
+listed as a future trigger and is now the design — see ADR-002 §3.)*
 
-> **Trigger (passthrough):** the first dataset where two users of the *same* app must see
-> different rows for a reason we cannot express as a masking rule — or a compliance requirement
-> that row-level policy be enforced by the data platform itself rather than by us.
-> **Trigger (data service):** the first tenant that is not on our language stack. Note these two
-> triggers point at the same rebuild, so if both look likely, do them together.
+> **Trigger:** the first tenant that is not on our language stack. The answer is alternative D
+> in ADR-002 — a data service behind HTTP — and it costs a network hop, a service to be paged
+> for, and a second identity problem.
 
-### 11. No federation to an enterprise data catalog — but the seam is cut for it
+### 11. No machine-to-machine exposure — no API Gateway
 
-Our registry is authoritative today. In the end state it should not be: classification, ownership
-and grants belong to whatever governed data platform the organisation runs, and a three-person
-team maintaining a second, divergent source of truth for who owns compensation data is a
-liability, not a feature.
+Apps are reachable by **people in browsers**, authenticated by the corporate IdP. Nothing here
+lets another system, a scheduled process in a different platform, or an agent call an app as a
+tool: no API keys, no per-consumer throttling, no usage plans, no mTLS.
 
-This is the omission we are *least* attached to. `catalog.yaml` deliberately holds only the subset
-such a platform would publish, and every lookup goes through one function, so the change is
-`resolve()` and nothing else (ADR-002 §6).
+This is why the front door is an ALB rather than API Gateway. ALB does browser SSO natively
+and carries the websockets Streamlit needs; API Gateway does neither, and its real strengths —
+throttling, usage plans, consumer keys — are exactly the things we have no use for **yet**.
 
-Not built here because the brief gives us a stubbed warehouse and a stubbed REST API and no
-catalog — building a fake one to defer to would be plumbing with no decision in it, and would
-dodge the question actually asked.
+> **Trigger:** the first machine-to-machine consumer. API Gateway would then sit in front of
+> the same Fargate services rather than replacing the ALB, and the interesting work is not the
+> gateway — it is deciding what a non-human caller's identity means for `require_role()` and
+> for the Unity Catalog grant it reads under.
 
-> **Trigger:** the organisation stands up a governed data platform with its own identity and grant
-> model. When that happens, do this **first** — before per-user passthrough (omission 10), because
-> it is what makes passthrough cheap rather than a programme.
+### 12. Not on Kubernetes
+
+Apps run on ECS Fargate. No cluster, no node pools, no add-on lifecycle, no CNI, and none of
+the Kubernetes policy ecosystem — no OPA/Gatekeeper, no NetworkPolicy, no per-namespace
+ResourceQuota.
+
+The honest version of this decision: for two or three engineers who also run support, a
+Kubernetes upgrade path is a second job. Fargate has no servers to patch.
+
+> **Trigger, and it has two halves.** Technically: needing workload-level policy-as-data, a
+> service mesh, or per-tenant network policy. Organisationally — and this is the one more
+> likely to fire — **if the company already operates EKS as a shared service**, the control
+> plane is already someone else's job, the cost argument mostly evaporates, and namespaces plus
+> NetworkPolicy plus ResourceQuota give real per-tenant isolation primitives we currently
+> hand-roll with IAM and security groups. That would be a reason to reopen this, not a reason
+> to have started here.
+
+### 13. No real infrastructure as code
+
+`infra/` describes the target architecture; it contains no CloudFormation, CDK or Terraform.
+Nothing in this submission can actually be deployed to an AWS account.
+
+This is a time-budget decision rather than a design one, and it is the omission that most
+weakens the phrase "production grade". What is *not* missing is the shape: every local fake
+has a named production counterpart and a stated seam (ARCHITECTURE §11), so the work is
+bounded rather than open.
+
+> **Trigger:** the first real environment. I would write it as CDK in Python — it produces
+> CloudFormation, so it fits an organisation whose standard is CloudFormation, it is the same
+> language as the platform, and it synthesises and unit-tests locally without an AWS account.
 
 ## The tension
 
@@ -172,7 +199,7 @@ one.
 **Why not, here.** Genuinely the right question to ask in reality, and for a real organisation
 this deserves a serious evaluation before writing any code. We build in this exercise because the
 brief asks us to design a substrate, and because the distinctive requirements — the data-broker
-and classification model in ADR-002, and the operator-access model in ADR-003 — are exactly the
+and the identity bridge in ADR-002, and the operator-access model in ADR-003 — are exactly the
 parts an off-the-shelf platform would not give us. A realistic hybrid is worth naming: buy the
 scaffolding and catalogue, build the data and access layer.
 

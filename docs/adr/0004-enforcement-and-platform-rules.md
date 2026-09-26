@@ -31,10 +31,10 @@ That observation produced the rule below.
 
 | Layer | What lives here | Why there |
 |---|---|---|
-| **Generator / template** | repo layout, Dockerfile, CI caller, health endpoint, port selection, `.gitignore` | If it is generated, it cannot be got wrong. Cheapest possible enforcement |
+| **Generator / template** | repo layout, the four CI callers, `pyproject.toml`, `.gitignore` | If it is generated, it cannot be got wrong. Cheapest possible enforcement. Note there is no Dockerfile to generate — a tenant declares `runtime.base` and the platform builds the image, which is cheaper still |
 | **SDK (runtime)** | credential handling, per-user data scoping, telemetry redaction, identity trust, dataset entitlement | Must hold even if CI is bypassed, and the failure mode is an accident rather than a policy breach |
 | **CI (central reusable workflow)** | manifest schema, dataset entitlement vs catalog, SDK version floor, no secrets, no `:latest`, tests pass | Must never *ship*. The platform owns the pipeline even though it does not own the code |
-| **Human review** | only manifest changes that cross a boundary: a new dataset, a new role, a classification change | The judgement calls — and there are few enough that three people can actually do them |
+| **Human review** | only manifest changes that cross a boundary: a new dataset, a new role, a change to `access.manage` | The judgement calls — and there are few enough that three people can actually do them. Sensitivity is **not** on this list: it is a Unity Catalog tag the data owner sets, not something we review |
 | **Documentation** | explanation, rationale, worked examples | **Enforcement of last resort.** If a rule only exists in a doc, assume it is not enforced |
 
 Two consequences of that ordering are worth stating explicitly:

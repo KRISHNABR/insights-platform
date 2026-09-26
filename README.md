@@ -24,7 +24,7 @@ flowchart TB
 
   SDK --> BRK["the data broker<br/>query() · fetch()<br/><i>one path to data, no escape hatch</i>"]
   WF --> REG[("control/registry<br/>catalog · grants · apps")]
-  REG -.->|"resolves dataset names to<br/>engine · location · credential · classification"| BRK
+  REG -.->|"resolves dataset names to<br/>a location, per environment"| BRK
 
   BRK --> CONN[("shared connections<br/>warehouse · internal REST API")]
   BRK --> AUD[("audit + events")]
@@ -128,7 +128,7 @@ curl -b cookies.txt \
 
 # 3. A tenant cannot declare its own data sensitive-or-not.
 #    Add `classification: internal` to a dataset in any app.yaml → the manifest is rejected,
-#    at runtime AND in CI.
+#    at runtime AND in CI. Sensitivity belongs to the data owner, not to the app team.
 ```
 
 ---
@@ -193,10 +193,11 @@ cut when that list empties, not on a date.
 **Isolation, and shared data connections** — the platform **brokers reads; it never hands
 out a connection.** Sharing a connection means sharing a credential, and then nothing
 stops the headcount dashboard selecting salaries. Tenants name a logical dataset; the
-platform resolves connection, engine, location, credential and classification. Isolation
-is soft by default with a restricted tier triggered by the **data's classification, not
-the tenant's identity** — and classification lives in the platform registry, so no team
-can downgrade its own.
+platform resolves connection, engine and location. Governance — ownership, sensitivity,
+grants, column masks, row filters — is **delegated to Unity Catalog** rather than
+reimplemented, because a second governance model beside the data platform's is a second
+source of truth that drifts silently. Isolation is soft by default, with a restricted tier
+triggered by the **data's sensitivity, not the tenant's identity**.
 → [ADR-002](docs/adr/0002-tenant-isolation-and-data-access.md)
 
 **Operator access** — telemetry structurally cannot carry payloads: the logger *raises*
@@ -222,53 +223,45 @@ enterprise data catalog.
 
 ## What I'd do next
 
-In order, with the reason — not a backlog, a sequence.
+In order, with the reason — a sequence, not a backlog.
 
-**1. A staging environment and promotion. *(the trigger has already fired)***
-This is the omission I'm least comfortable with. ADR-005 says the trigger is "the first
-tenant whose app affects a decision someone is accountable for" — which is People
-Analytics, i.e. now. Everything is already environment-aware (the registry resolves
-locations per environment), so this is a second registry environment and a promotion
-gate rather than a redesign. I left it because a fake second environment would have
-proved nothing; a real one is the first thing I'd build.
+**1. Real infrastructure as code, and a second environment.**
+`infra/` describes the target; it deploys nothing. This is the omission that most weakens the
+phrase "production grade", and it is the one I'd close first. I'd write it as CDK in Python:
+it produces CloudFormation, so it fits an organisation whose standard is CloudFormation, it is
+the same language as the platform, and it synthesises and unit-tests without an AWS account.
+Environments already exist in the manifest and the workflows — they are simply not exercised.
 
-**2. Periodic access review.** The compliance partner will ask for it and we don't have
-it. All the data exists — grants, audit records, owners — so this is a report and a
-cadence, not new machinery. It pairs naturally with (1) because both are about evidence
-over time rather than evidence at a point.
+**2. The identity bridge, for real.** The design says an interactive app exchanges the user's
+session for a short-lived Databricks token, so Unity Catalog sees the actual person. That is
+the single most valuable thing in the design and the most likely to be fiddly: token lifetime,
+refresh, what happens mid-session when a grant is revoked. It is structural in the code and
+not wired, and I'd rather say so than imply otherwise.
 
-**3. Move the broker into a sidecar.** Today the credential sits in the tenant's own
-process, which I've written down rather than glossed (ADR-002 §3). A sidecar in the same
-pod gives process isolation without the cost of a platform-wide data service. I'd do
-this before onboarding any tenant that isn't a team of employees.
+**3. Periodic access review.** The compliance partner will ask and we don't have it. All the
+inputs exist — UC grants, UC audit, owners — so this is a report and a cadence, not new
+machinery.
 
 **4. Make `insights status` answer "is it broken?" rather than "did it run?"**
-Right now it reports last-seen and version — enough to operate five apps, thin for
-twenty-five. The next increment is error rates and last-failure per app, from telemetry
-we already emit. Cheap, and it's the difference between operating and watching.
+It reports last-seen and version: enough for five apps, thin for twenty-five. The next
+increment is error rate and last failure per app, from telemetry we already emit.
 
-**5. Federate the registry to a real data catalog.** Our registry is authoritative today
-and shouldn't be forever: classification, ownership and grants belong to whatever
-governed data platform the organisation runs. I shaped `catalog.yaml` as a projection of
-exactly that, and every lookup goes through one function, so this is `resolve()` and
-nothing else (ADR-002 §6). Do it *before* per-user credential passthrough — it's what
-makes passthrough an integration instead of a programme.
+**5. A second engine adapter, chosen by a real tenant.** The claim that "adding an engine
+inherits every control for free" is true in the code and unproven in practice. The first real
+request tests it, and I'd rather find out on someone's object store than assume.
 
-**6. A second engine adapter, chosen by an actual tenant.** The broker's value claim is
-"adding an engine inherits every control for free." That's true in the code and
-unproven in practice. The first real request tests it, and I'd rather find out on
-someone's object store than assume.
+**6. Machine-to-machine exposure.** The first system or agent that wants to call an app as a
+tool needs API Gateway in front of the same services — and, more interestingly, a decision
+about what a non-human caller's identity means for `require_role()` and for the Unity Catalog
+grant it reads under. That is a design question, not a gateway question.
 
 ### And the thing I'd change about what's here
 
-The data API is narrow on purpose — two verbs, no escape hatch — and I think that's
-right, but it's the decision most likely to be wrong. The signal to watch is the rate of
-"can the platform add X" tickets. A slow trickle means the API is well-judged. A steady
-stream means the platform team has become a queue, and the honest response then isn't to
-add an escape hatch — it's alternative C in ADR-002, a data service that other languages
-and other shapes of query can reach.
-
----
+The data API is narrow on purpose — two verbs, no escape hatch — and I think that's right, but
+it's the decision most likely to be wrong. The signal to watch is the rate of "can the platform
+add X" tickets. A slow trickle means the API is well-judged. A steady stream means the platform
+team has become a queue, and the honest response then isn't an escape hatch — it's a data
+service that other languages and other shapes of query can reach (ADR-002 alternative D).
 
 ## Notes on scope
 
@@ -286,8 +279,8 @@ Docker Compose (the CLI orchestrates the local stack in one command), no retries
 backfill in the scheduler. Each of those would have looked more finished and taught a
 reader less.
 
-**Two things surfaced by building rather than designing**, both of which changed the
-design and are the reason the code was worth writing:
+**Three things surfaced by building rather than designing**, all of which changed the design
+and are the reason the code was worth writing:
 
 - A scheduled job has no human caller, so "may this caller see salaries?" has no answer
   from corporate groups. The tempting fix — read `access.roles` from the manifest — lets
@@ -296,3 +289,6 @@ design and are the reason the code was worth writing:
 - An undeclared dataset and a nonexistent one now return the *same* error, because a
   differentiated error would let any tenant enumerate the registry by guessing names.
   That's a discovery oracle, and there's a test asserting the two errors stay identical.
+- Mounting the example app's frontend at `/` silently shadowed **every** API route, because
+  the mount is registered before the tenant's own decorators run. It now mounts on startup,
+  so the catch-all is genuinely last. Nothing about that is visible from reading the design.

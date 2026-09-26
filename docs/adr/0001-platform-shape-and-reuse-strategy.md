@@ -19,8 +19,8 @@ build.** Any mechanism whose cost grows linearly with tenant count will consume 
 Two things can drift in a platform like this, and they are usually conflated:
 
 1. **The library** — an app pinned to an old version of shared behaviour.
-2. **The scaffold** — an app created eighteen months ago whose CI config, Dockerfile and
-   directory layout are eighteen months old, with nothing to tell anyone.
+2. **The scaffold** — an app created eighteen months ago whose CI config and directory
+   layout are eighteen months old, with nothing to tell anyone.
 
 The second is the one most platforms lose, and the tell is easy to spot: an onboarding guide
 containing a sentence like *"don't copy an existing app, use the current template."* That is a
@@ -72,10 +72,10 @@ the SDK support-window check, secret scanning, build, registration, rollout — 
 platform side. Improving any of it is one commit rather than twelve pull requests, which is the
 same argument as the SDK and the reason both answers are in one ADR.
 
-**Building.** Every app builds `FROM insights-hub/base:0.1`, which carries the runtime, the SDK,
-the non-root user, the entrypoint and the health contract. A platform CVE is one base-image
-rebuild and a redeploy. CI rejects an app whose `FROM` is `:latest`, because a floating base tag
-quietly destroys that property.
+**Building.** A tenant has no Dockerfile. They declare `runtime.base` — one of a small published
+family — and the platform renders the image. The base carries the runtime, the SDK, the non-root
+user, the entrypoint and the health contract, so a platform CVE is one rebuild and a redeploy
+rather than 25 pull requests. Nothing floats: a tenant cannot pin, and cannot drift.
 
 **Running.** Two archetypes, one platform:
 

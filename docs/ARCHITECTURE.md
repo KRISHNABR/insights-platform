@@ -537,7 +537,7 @@ platforms leave as a to-do. **A tenant writes nothing for any of this.**
 | **Errors** | SDK middleware, by status class | CloudWatch EMF | Is it broken? |
 | **Duration** | SDK middleware, p50/p95/p99 | CloudWatch EMF | Is it slow? |
 | **Job outcome** | `run_job()` — success, failure, duration, retries | CloudWatch EMF | Did the 6am run work? |
-| **Data reads** | the broker — dataset, rows, ms, classification | audit stream + UC system tables | Who read what? |
+| **Data reads** | the broker — dataset, rows, ms, sensitivity | our correlation record + UC system tables | Who read what, from which app, for which request? |
 | **Deprecated SDK use** | `@deprecated` | CloudWatch EMF | Who is blocking the next major? |
 
 **A dashboard per app, built at deploy time** — not by hand, and not a thing a team has to

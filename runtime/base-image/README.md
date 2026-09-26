@@ -21,9 +21,10 @@ review — not a team's private decision.
 
 | `runtime.base` | Contains | For |
 |---|---|---|
-| `python-web` | Python 3.12, SDK, uvicorn, Jinja2, the platform design system | `kind: web` — dashboards and internal APIs |
-| `python-data` | Python 3.12, SDK, pandas, pyarrow, no web server | `kind: job` — batch and reporting |
+| `python-web` | Python 3.12, SDK, uvicorn | `web.type: api` and `spa` — JSON backends, and serving a team's own frontend |
+| `python-data` | Python 3.12, SDK, pandas, pyarrow, **no web server** | `kind: job` — batch and reporting. A job that cannot serve traffic cannot quietly become an unmonitored API |
 | `python-min` | Python 3.12, SDK only | Small jobs where start-up time matters |
+| `python-streamlit` | Python 3.12, SDK, Streamlit, pandas, the identity shim and health sidecar | `web.type: streamlit` — exploratory dashboards |
 
 `insights runtimes` lists them with their current versions and patch dates.
 
@@ -55,5 +56,5 @@ Three answers, in the order we try them:
 
 ## Files here
 
-- `python-web.Dockerfile`, `python-data.Dockerfile`, `python-min.Dockerfile` — the family
+- `python-web.Dockerfile`, `python-data.Dockerfile`, `python-min.Dockerfile`, `python-streamlit.Dockerfile` — the family
 - `entrypoint.sh` — shared by all of them; branches on `kind`

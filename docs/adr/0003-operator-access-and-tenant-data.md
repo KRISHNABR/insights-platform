@@ -158,7 +158,7 @@ management chain. That is slower, and it is a deliberate choice rather than an o
 |---|---|
 | Redaction raising at the emit point | **built** — `obs.py`, and `tests/test_telemetry_boundary.py` |
 | Per-dataset sensitive-field assertion, armed when the broker resolves a restricted dataset | **built** — the field list comes from the catalog, so a tenant cannot shorten it |
-| Every read audited with caller, classification and masked-field count | **built** — `obs.audit_read`, written to `runtime/sinks/audit.jsonl` |
+| Every read audited with caller, sensitivity and masked-field count | **built** — `obs.audit_read`, written to `runtime/sinks/audit.jsonl`. In production this is the *correlation* record; Unity Catalog's `system.access.audit` is the authoritative one |
 | Zero standing operator access | **built, structurally** — the platform team holds no grants, and the broker's only path to data requires one |
 | The break-glass **data model** — expiry, second approver, tenant notification, usage count | **built** — `control/registry/grants.yaml`, and the report reads it |
 | The break-glass **workflow** — `insights access breakglass request` / `approve` | **not built.** The evidence trail and the schema exist; the command to create an entry does not |
