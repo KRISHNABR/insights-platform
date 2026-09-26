@@ -14,7 +14,7 @@ cat <<'MSG'
 
   Insights Hub is ready.
 
-    cd insights-platform && ./dev up
+    cd insights-platform && uv run insights up
 
   Then open the forwarded port 8080 and append ?as=krishna@corp.example to any app URL.
   That is the whole local login.

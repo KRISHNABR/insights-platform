@@ -130,7 +130,14 @@ async def proxy(app_name: str, path: str, request: Request):
 
     # --- 4. proxy ------------------------------------------------------------------
     upstream = f"http://127.0.0.1:{entry['port']}/{path}"
-    async with httpx.AsyncClient(timeout=20) as client:
+    # verify=False because this hop is plain HTTP to loopback - there is no TLS in
+    # the path to verify. It also avoids building an SSL context (and loading a CA
+    # bundle) on every request for a connection that will never use one.
+    #
+    # In production TLS terminates at the load balancer in front of this, and the
+    # hop from the gateway to an app stays inside the VPC. If that ever becomes a
+    # real network hop, this becomes a verified mTLS client - not a verify=True.
+    async with httpx.AsyncClient(timeout=20, verify=False) as client:
         upstream_response = await client.request(
             request.method, upstream, headers=headers,
             params=request.query_params, content=await request.body(),

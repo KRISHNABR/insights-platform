@@ -40,7 +40,7 @@ which is what makes everything below enforceable rather than aspirational.
 ## The one artefact to ask for
 
 ```bash
-./dev compliance-report --dataset hr.compensation
+uv run insights compliance-report --dataset hr.compensation
 ```
 
 ```

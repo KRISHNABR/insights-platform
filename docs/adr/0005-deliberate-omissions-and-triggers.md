@@ -64,7 +64,7 @@ Every tenant shares the runtime, the broker and the control plane (ADR-002).
 
 ### 5. No containers locally — a single-host process supervisor
 
-`./dev up` is a Python process supervisor: it seeds a SQLite file, starts two stub services
+`uv run insights up` is a Python process supervisor: it seeds a SQLite file, starts two stub services
 and the tenant apps as plain processes, and puts the edge in front of them. There is no
 `compose.yaml`, no local container runtime, and no local registry.
 

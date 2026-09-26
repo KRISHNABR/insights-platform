@@ -13,8 +13,8 @@ person reading it is on call, tired, and did not write the code.
 ### Is everything alright?
 
 ```bash
-./dev status                                    # every app: team, kind, SDK version, last seen
-./dev compliance-report --dataset hr.compensation
+uv run insights status                                    # every app: team, kind, SDK version, last seen
+uv run insights compliance-report --dataset hr.compensation
 ```
 
 In production, the per-app CloudWatch dashboard is the first stop. Four alarms page us:
@@ -101,7 +101,7 @@ About thirty minutes, most of it waiting for a data owner.
 2. Create their repo from `insights new-app`.
 3. Confirm `access.manage.owners` is a **corporate group**, not a person. The manifest loader
    rejects anything containing `@`, but check the group actually exists.
-4. Their first `./dev up` should work with no help. If it does not, that is the highest-priority
+4. Their first `uv run insights up` should work with no help. If it does not, that is the highest-priority
    bug we have that week.
 
 ---
@@ -261,5 +261,5 @@ None of these should be worked around. If one is wrong, fix the rule.
   slowest feedback loop there is, and the reason people resent platforms.
 - **Two isolation tiers is the maximum.** If someone proposes a third, the model is wrong, not
   the tier count.
-- **The local loop finds sibling repos by directory name.** Rename a repo and `./dev up` stops
+- **The local loop finds sibling repos by directory name.** Rename a repo and `uv run insights up` stops
   working, with an unhelpful error. Worth fixing if it ever bites twice.

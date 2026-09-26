@@ -63,7 +63,7 @@ jobs:
         run: |
           for app in insights-headcount-dashboard insights-comp-report; do
             echo "::group::doctor $app"
-            (cd "$app" && ../insights-platform/dev doctor)
+            (cd "$app" && uv run insights doctor)
             echo "::endgroup::"
           done
 
@@ -75,7 +75,7 @@ jobs:
           cp app.yaml "$RUNNER_TEMP/app.yaml.bak"
           sed -i 's/^  - dataset: hr.headcount$/  - dataset: hr.headcount\n    classification: internal/' app.yaml
           grep -q 'classification: internal' app.yaml || { echo "::error::could not inject"; exit 1; }
-          if ../insights-platform/dev doctor > "$RUNNER_TEMP/reject.txt" 2>&1; then
+          if uv run insights doctor > "$RUNNER_TEMP/reject.txt" 2>&1; then
             echo "::error::a manifest declaring classification was ACCEPTED"
             cat "$RUNNER_TEMP/reject.txt"
             cp "$RUNNER_TEMP/app.yaml.bak" app.yaml
@@ -89,7 +89,7 @@ jobs:
       - name: Run the scheduled job
         working-directory: insights-hub/insights-comp-report
         run: |
-          ../insights-platform/dev run 2>&1 | tee "$RUNNER_TEMP/job.jsonl"
+          uv run insights run 2>&1 | tee "$RUNNER_TEMP/job.jsonl"
           grep -q '"via_grant": true'         "$RUNNER_TEMP/job.jsonl"   # the owner's grant applied
           grep -q '"event": "output_written"' "$RUNNER_TEMP/job.jsonl"   # a declared output landed
           grep -q '"event": "job_complete"'   "$RUNNER_TEMP/job.jsonl"
@@ -98,7 +98,7 @@ jobs:
       - name: Boot the platform and exercise the web path
         working-directory: insights-hub/insights-platform
         run: |
-          ./dev up --port 9000 > "$RUNNER_TEMP/up.log" 2>&1 &
+          uv run insights up --port 9000 > "$RUNNER_TEMP/up.log" 2>&1 &
           for _ in $(seq 1 60); do
             curl -sf http://localhost:9000/ >/dev/null && break
             sleep 1
@@ -137,7 +137,7 @@ jobs:
       # ---- 6 · the evidence a reviewer would be handed -----------------------
       - name: Compliance report
         working-directory: insights-hub/insights-platform
-        run: ./dev compliance-report --dataset hr.compensation 2>&1 | tee "$RUNNER_TEMP/compliance.txt"
+        run: uv run insights compliance-report --dataset hr.compensation 2>&1 | tee "$RUNNER_TEMP/compliance.txt"
 
       - name: Summary
         if: always()

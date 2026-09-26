@@ -54,7 +54,7 @@ recommendation is reachable rather than aspirational.
 | Registry | two YAML files | Readable, reviewable, diffable |
 
 ```bash
-./dev up          # that is the entire setup
+uv run insights up          # that is the entire setup
 ```
 
 **Everything above is a fake**, and deliberately so — the brief encourages it. What is *not*
@@ -88,7 +88,7 @@ which is both less code and a stronger guarantee. ADR-002 argues this properly.
 | our audit file | Firehose → S3 Object Lock | **UC `system.access.audit`** |
 | env-var credentials | task role | **OAuth federation — no stored secret** |
 | the Python scheduler | EventBridge Scheduler → ECS RunTask | Databricks Jobs, for heavy transforms |
-| `./dev up` | ECS services behind an ALB | — |
+| `uv run insights up` | ECS services behind an ALB | — |
 
 ## 3 · The pieces
 
@@ -661,7 +661,7 @@ IAM policy, `web.route` becomes a listener rule, `job.*` becomes a schedule. The
 ## 9 · Running it locally
 
 ```bash
-./dev up
+uv run insights up
 ```
 
 That is the whole setup. Python 3.12 and [uv](https://docs.astral.sh/uv/); no Docker, no
@@ -714,10 +714,10 @@ curl -b cookies.txt -H "X-Auth-Groups: comp-analyst" \
 #     vidya@corp.example is not a headcount-viewer
 
 # 4 · run the job; watch the audit record and the declared output appear
-cd ../insights-comp-report && ../insights-platform/dev run
+cd ../insights-comp-report && uv run insights run
 
 # 5 · evidence a reviewer would be handed
-./dev compliance-report --dataset hr.compensation
+uv run insights compliance-report --dataset hr.compensation
 ```
 
 Add `sales.pipeline` to a query in `src/main.py` and it fails: a real dataset, with real rows,
@@ -816,7 +816,7 @@ The last column is the honest measure of whether the recommendation is reachable
 | Data credential | env var the CLI injects | **OAuth federation — no stored secret** | `adapters.py` — token exchange or workload identity |
 | Who the data platform sees | the app | **the signed-in person** | `adapters.py` — the same function |
 | Internal REST API | stdlib stub | the real service via PrivateLink | base URL, from the registry |
-| Deployment | `./dev up` | GitHub OIDC → ECR → ECS | the reusable workflow |
+| Deployment | `uv run insights up` | GitHub OIDC → ECR → ECS | the reusable workflow |
 | Scheduling | Python cron matcher | EventBridge Scheduler → ECS RunTask | `runtime/scheduler/` — replaced, not adapted |
 | Logs & metrics | JSONL to `runtime/sinks/` | CloudWatch Logs + EMF | nothing — stdout either way |
 | Data audit | our JSONL file | **UC `system.access.audit`** + our correlation record | `compliance-report` reads two sources instead of one |

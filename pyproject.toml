@@ -1,0 +1,27 @@
+# The platform repo is a uv project so that `uv run insights ...` works here exactly as
+# it does in a tenant repo. One command name everywhere.
+#
+# It depends on the SDK by PATH rather than by version, because the four repos sit side
+# by side during development and the platform should always run against the SDK in the
+# checkout next to it - not a published release that may be older than the code you are
+# editing.
+[project]
+name = "insights-platform"
+version = "0.1.0"
+description = "The Insights Hub platform: runtime, control plane, and the reusable pipelines."
+requires-python = ">=3.12"
+
+dependencies = [
+  "insights-sdk",        # resolved from the sibling checkout, see [tool.uv.sources]
+  "fastapi>=0.110",      # the edge
+  "uvicorn>=0.27",
+  "httpx>=0.27",         # the edge proxies with it
+  "pyyaml>=6.0",
+  "packaging>=24.0",     # control/cli/gates.py resolves version ranges
+]
+
+[tool.uv]
+package = false          # a deployable, not a library
+
+[tool.uv.sources]
+insights-sdk = { path = "../insights-sdk", editable = true }
