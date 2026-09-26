@@ -30,7 +30,25 @@ PLATFORM = HERE.parent.parent
 REGISTRY = PLATFORM / "control" / "registry" / "apps.json"
 
 
-def _field_matches(spec: str, value: int) -> bool:
+#: cron allows three-letter day and month names. The platform's own most sensitive
+#: job declares "0 6 * * MON", so not supporting these was not a theoretical gap -
+#: the scheduler crashed on its first tick with ValueError: invalid literal for int().
+DAY_NAMES = {"SUN": 0, "MON": 1, "TUE": 2, "WED": 3, "THU": 4, "FRI": 5, "SAT": 6}
+MONTH_NAMES = {
+    "JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
+    "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12,
+}
+
+
+def _as_int(token: str, names: dict[str, int]) -> int:
+    token = token.strip().upper()
+    if token in names:
+        return names[token]
+    return int(token)
+
+
+def _field_matches(spec: str, value: int, names: dict[str, int] | None = None) -> bool:
+    names = names or {}
     if spec == "*":
         return True
     for part in spec.split(","):
@@ -38,10 +56,10 @@ def _field_matches(spec: str, value: int) -> bool:
             if value % int(part[2:]) == 0:
                 return True
         elif "-" in part:
-            low, high = (int(x) for x in part.split("-"))
+            low, high = (_as_int(x, names) for x in part.split("-"))
             if low <= value <= high:
                 return True
-        elif int(part) == value:
+        elif _as_int(part, names) == value:
             return True
     return False
 
@@ -53,8 +71,8 @@ def due(schedule: str, at: datetime) -> bool:
         _field_matches(minute, at.minute)
         and _field_matches(hour, at.hour)
         and _field_matches(day, at.day)
-        and _field_matches(month, at.month)
-        and _field_matches(weekday, (at.weekday() + 1) % 7)   # cron: Sunday is 0
+        and _field_matches(month, at.month, MONTH_NAMES)
+        and _field_matches(weekday, (at.weekday() + 1) % 7, DAY_NAMES)   # cron: Sunday is 0
     )
 
 
@@ -90,11 +108,25 @@ def main() -> int:
     jobs = {n: e for n, e in registry.items() if e.get("kind") == "job"}
     print(f"[scheduler] {len(jobs)} job(s): {', '.join(jobs) or '-'}")
 
+    # The tick is 30s and `due()` matches to the minute, so without this a job fires
+    # TWICE every time - once at :05 and again at :35. Remembering the last minute we
+    # fired each job is the whole fix. (On Kubernetes this component becomes a
+    # CronJob and the problem stops existing; see ADR-005.)
+    last_fired: dict[str, str] = {}
+
     while True:
         now = datetime.now(timezone.utc)
+        stamp = now.strftime("%Y-%m-%dT%H:%M")
         for name, entry in jobs.items():
-            if args.all or (entry.get("schedule") and due(entry["schedule"], now)):
+            if args.all:
                 run(name, entry)
+                continue
+            if not entry.get("schedule") or not due(entry["schedule"], now):
+                continue
+            if last_fired.get(name) == stamp:
+                continue                      # already fired this minute
+            last_fired[name] = stamp
+            run(name, entry)
         if args.once or args.all:
             return 0
         time.sleep(30)

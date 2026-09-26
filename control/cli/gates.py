@@ -21,6 +21,9 @@ import re
 import sys
 from pathlib import Path
 
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.version import Version
+
 try:  # in CI the SDK is pip-installed, which is the path that matters
     from insights_sdk import SUPPORTED_VERSIONS, config
     from insights_sdk.errors import InsightsError
@@ -74,9 +77,22 @@ def main() -> int:
             )
 
     # 3. the SDK floor is inside the support window (ADR-001, N-2)
+    #
+    # This gate is the enforcement point for the whole reuse/upgrade story, so it
+    # has to actually be able to fail. An earlier version ended in `or True`, which
+    # meant `>=9.9,<10` and even `>=banana` passed. Now it resolves the declared
+    # range against the versions we actually support.
     floor = manifest.sdk_floor
-    if not any(version.startswith(floor.split(",")[0].lstrip(">=")) or True for version in SUPPORTED_VERSIONS):
-        fail(f"sdk floor {floor} is outside the supported window {SUPPORTED_VERSIONS}")
+    try:
+        supported = SpecifierSet(floor)
+    except InvalidSpecifier:
+        fail(f"runtime.sdk {floor!r} is not a valid version range")
+    else:
+        if not any(supported.contains(Version(v)) for v in SUPPORTED_VERSIONS):
+            fail(
+                f"runtime.sdk {floor} matches no supported version. The platform supports "
+                f"{', '.join(SUPPORTED_VERSIONS)} (current major plus two). See ADR-001."
+            )
 
     # 4. no secrets committed
     for path in Path(".").rglob("*"):
@@ -91,14 +107,19 @@ def main() -> int:
                 fail(f"possible secret in {path}")
                 break
 
-    # 5. the base image is pinned
-    dockerfile = Path(args.dockerfile)
-    if dockerfile.is_file():
-        first = next((l for l in dockerfile.read_text().splitlines() if l.startswith("FROM")), "")
-        if ":latest" in first or ":" not in first:
-            fail(f"base image must be pinned to a version, got: {first.strip()}")
-        if "insights-hub/base" not in first:
-            fail(f"apps build from the platform base image, got: {first.strip()}")
+    # 5. a tenant repo must NOT contain a Dockerfile
+    #
+    # Inverted from an earlier version, which checked the CONTENTS of a tenant
+    # Dockerfile. There is no such file: the platform renders the image from
+    # runtime.base at build time, which is what makes "runs as non-root", "built on
+    # a supported base" and "SDK matches the manifest" true rather than checked.
+    # A Dockerfile appearing here means someone is trying to take that back.
+    if Path("Dockerfile").is_file():
+        fail(
+            "this repo contains a Dockerfile. The platform renders the image from "
+            "runtime.base in app.yaml - run `insights build --show` to see it. A "
+            "hand-written Dockerfile would make the platform's guarantees unenforceable."
+        )
 
     failures = globals()["FAILURES"]
     print(f"platform gates: {'PASS' if not failures else f'{failures} failure(s)'}")

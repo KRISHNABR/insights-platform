@@ -27,7 +27,7 @@ which is what makes everything below enforceable rather than aspirational.
 | 1 | Only entitled apps read compensation data | **Two keys**: the team declares the dataset in its own manifest, *and* the dataset owner records a grant in the platform registry. Neither alone is sufficient | SDK runtime **and** CI | `insights compliance-report --dataset hr.compensation` · [`control/registry/grants.yaml`](control/registry/grants.yaml) |
 | 2 | Teams cannot decide how sensitive their own data is | Sensitivity is a **Unity Catalog tag** set by the data owner. A manifest containing the word `classification` — at any depth — is rejected outright | manifest loader **and** CI gate | `tests/test_manifest_contract.py` · try adding it to any `app.yaml` |
 | 3 | Apps cannot reach data they did not declare | Entitlement is checked on every read. SQL is additionally scanned and refused if it references another dataset's table | SDK runtime | `test_an_undeclared_dataset_is_refused`, `test_sql_cannot_reach_past_the_declared_dataset` |
-| 4 | Users see only the fields they may see | **Unity Catalog column masks and row filters**, applied by the data platform per person — on every path to the data, including a notebook, not only through this platform | Unity Catalog | UC mask definitions; locally approximated and covered by `test_a_caller_without_the_role_gets_masked_fields` |
+| 4 | Users see only the rows and fields they may see | **Unity Catalog column masks and row filters**, applied by the data platform per person — on every path to the data, including a notebook, not only through this platform | Unity Catalog | UC mask definitions; locally approximated and covered by `test_a_caller_without_the_role_gets_masked_fields` |
 | 5 | An app cannot grant itself unmasked access | For scheduled runs, the roles the app operates under come from the **grant**, written by the dataset owner — never from the team's own manifest | SDK runtime | `test_a_job_without_a_granted_role_is_still_masked` |
 | 6 | Compensation data never reaches logs | The logger **raises** on any non-scalar field, and additionally on any field *name* belonging to a restricted dataset the app has read | SDK runtime | `tests/test_telemetry_boundary.py` · `runtime/sinks/events.jsonl` |
 | 7 | Identity cannot be forged | The edge strips every identity header a client sends and re-injects its own. An app with no edge in front of it has a caller with no groups, so every check fails | edge + SDK runtime | `test_a_client_cannot_assert_its_own_identity` · the curl example in the [README](README.md) |
@@ -71,7 +71,6 @@ Named here rather than left for you to find. Each has a written trigger in
 
 | Not built | Why not, honestly | What would change it |
 |---|---|---|
-| **Row-level security inside the warehouse** | **Now built** — Unity Catalog row filters, enforced per person, because interactive apps reach UC as the signed-in user rather than as a service account | — |
 | **Periodic access review** | Not built. The data exists (grants, audit, owners); the report and the cadence do not | Your requirement. It is first on the "what next" list after a staging environment |
 | **A separate production environment** | Everything runs in one environment today | Already triggered, by this onboarding. It is the next thing we build |
 | **Per-tenant infrastructure** | Two to three engineers cannot operate twenty-five isolated stacks. Tenants are teams of employees, with organisational recourse | A tenant that is not a team of employees — a contractor, a joint venture, an acquired entity |
@@ -79,11 +78,25 @@ Named here rather than left for you to find. Each has a written trigger in
 
 ---
 
-## The gap we cannot close, stated plainly
+## The gap, stated plainly — and which environment it applies to
 
-The data broker runs **inside the tenant's own process**, so the database credential is
-present in that process's environment. A determined team member could read it and open a
-connection the platform never sees.
+This is the one place the design reads differently depending on where it runs, so it is worth
+being exact rather than reassuring. The full argument is in
+[ADR-002 §3](docs/adr/0002-tenant-isolation-and-data-access.md).
+
+**On the Databricks target, there is no long-lived data credential to take.** An interactive
+app exchanges the signed-in user's session for a short-lived token, so Unity Catalog sees the
+actual person; a scheduled job federates its workload identity. Nothing is stored, so there is
+nothing for a platform engineer — or a tenant — to read.
+
+**What remains is narrower**, and it is this: the broker runs **in the tenant's own process**,
+so whatever token that process holds for the duration of a query is reachable from that
+process. A determined team member could use it directly and make a read the platform never
+audits.
+
+**Locally it is wider**, because the stub warehouse is a plain file and the path is in the
+environment: a local process can read the whole file. That is a property of the stub, not of
+the design.
 
 We accept this, and we want you to accept it knowingly rather than not notice it:
 

@@ -44,11 +44,14 @@ connections:
         host_env: DATABRICKS_HOST
         warehouse_env: DATABRICKS_WAREHOUSE_ID
         auth: oauth-federated
-      # Local development. Postgres is the closest honest stand-in: it has real
-      # users and real GRANTs, so the restricted-data behaviour can be
-      # DEMONSTRATED rather than described. It is not Unity Catalog - column
-      # masks are approximated with views and column privileges, so governance
-      # behaviour is only exactly right against a real workspace.
+      # Local development: a SQLite file, seeded by a script. It has no users and
+      # no GRANTs, so the restricted-data behaviour is approximated by the BROKER
+      # (the local_masking block below) rather than by the database.
+      #
+      # That is the honest local seam: the behaviour a developer sees matches
+      # production, the ENFORCER does not. On the Databricks target the broker
+      # applies no masking at all - Unity Catalog does, for every reader on every
+      # path including a notebook. See ADR-002 s2.
       local:
         dsn_env: INSIGHTS_WAREHOUSE_DSN
         governance: local-approximation

@@ -19,7 +19,7 @@ jobs:
       - name: Fetch the platform registry
         uses: actions/checkout@v4
         with:
-          repository: insights-hub/insights-platform
+          repository: ${{ github.repository_owner }}/insights-platform
           path: .platform
 
       - name: Install uv
@@ -27,6 +27,7 @@ jobs:
         with: {version: "0.5.11"}
 
       - run: uv sync --frozen        # --frozen: the committed lockfile must be current
+      - run: uv pip install packaging   # gates.py resolves version ranges
 
       # The SAME command the tenant runs at their desk. Not a similar check -
       # the same one, so CI can never teach a rule the CLI didn't already enforce.

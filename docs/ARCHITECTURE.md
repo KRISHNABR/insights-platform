@@ -45,7 +45,7 @@ recommendation is reachable rather than aspirational.
 |---|---|---|
 | Language | Python 3.12, **uv** | One toolchain, one lockfile |
 | Web | FastAPI + uvicorn | Already a dependency of the SDK |
-| Front door / login | the platform **edge**, `?as=krishna@corp.example` | A stubbed IdP is still a real trust boundary — see §6 |
+| Front door / login | the platform **edge** (FastAPI), `?as=krishna@corp.example` sets a cookie | A stubbed IdP is still a real trust boundary — see §6 |
 | Warehouse | **SQLite file**, seeded by a script | Zero setup. `hr.headcount` is a real table with real rows |
 | Internal REST API | ~40 lines of `http.server` | Proves a second connection type goes through the same broker |
 | Secrets | environment variables the CLI injects | Stands in for a credential the app never chooses |
@@ -323,20 +323,21 @@ Two steps carry almost all the security weight:
 The goal is **one code path**, not a local special case. The edge always does the same thing:
 verify a signed JWT from the front door. Only two settings differ.
 
-| | Local | AWS |
+| | Local — what runs today | Production — recommended |
 |---|---|---|
-| Front door | Traefik + oauth2-proxy | ALB with an OIDC action |
-| IdP | **Dex** container, static users | Entra ID |
-| Sign-in | pick `krishna@corp.example` from a list | real password + MFA |
-| Token the edge receives | OIDC id_token signed by Dex | JWT signed by the ALB |
-| `AUTH_ISSUER` | `http://dex:5556` | the ALB's ARN |
-| `AUTH_JWKS_URL` | `http://dex:5556/keys` | the regional ALB key endpoint |
-| Edge code | **identical** | **identical** |
+| Front door | the platform edge (FastAPI) | ALB with an OIDC action |
+| IdP | none — `?as=` sets a signed cookie | Entra ID |
+| Sign-in | pick a user from `runtime/edge/users.yaml` | real password + MFA |
+| What the edge trusts | a session cookie it set itself | a JWT signed by the ALB, verified against its JWKS |
+| What the **app** trusts | `X-Auth-*` plus a shared edge token | the same headers, plus the same shared secret |
 
-Because Dex is a real OIDC provider, the local edge verifies a real signature against a real
-JWKS. It isn't a fake that trusts a header — which means the code path that runs on a laptop
-is the code path that runs in production, and "works locally, fails in prod" auth bugs don't
-have anywhere to hide.
+**Be precise about what is and is not proven locally.** The trust *boundary* is real and
+tested: the edge strips every client-supplied identity header, re-injects verified ones, and
+an app without a valid edge assertion has a caller with no groups. What is **not** exercised
+locally is signature verification — the local edge checks a cookie it issued, not an OIDC
+token. Swapping that for JWKS verification is one function in `runtime/edge/main.py`, and
+everything downstream is unchanged because everything downstream consumes the *edge's*
+assertion rather than the IdP's.
 
 > **Real-world detail worth knowing:** Entra emits group **object IDs** in the `groups` claim,
 > not names — and above ~200 groups it stops emitting them entirely and sends a Graph API
@@ -395,11 +396,11 @@ front door. So:
 - The **backend never sees a token either** — it sees the edge's verified headers. So a tenant
   cannot accidentally log one, forward one, or use one to call something else.
 
-Because auth is cookie-based, cross-site request forgery is the trade-off, and the platform
-handles it rather than asking teams to: the session cookie is `SameSite=Lax`, and the SDK's
-middleware rejects state-changing requests (`POST`, `PUT`, `PATCH`, `DELETE`) that arrive
-without the matching CSRF token. Generated templates include it; `spa` apps read it from a
-cookie the platform sets. A team never writes CSRF code, and cannot forget to.
+Because auth is cookie-based, cross-site request forgery is the trade-off — and **it is not
+handled yet.** The session cookie is `SameSite=Lax`, which covers the common case, but there
+is no CSRF token and no middleware enforcing one. Both example apps are read-only, so nothing
+in this submission is exposed; the first state-changing endpoint would be. It is in ADR-005's
+trigger list rather than described as if it existed.
 
 **Streamlit is the same story with a different mechanic.** Streamlit has no middleware, so the
 SDK reads the edge's headers from `st.context.headers` and builds the identical `Caller`.

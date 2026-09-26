@@ -1,7 +1,7 @@
 # Base image: python-web
 #
-# For kind: web. Carries a web server and the platform design system so a tenant
-# writes handlers and a template, not a stack.
+# For web.type: api and spa. Carries the web server; an `spa` app's own frontend is
+# copied in by the rendered Dockerfile. The platform serves a bundle; it never builds one.
 FROM python:3.12-slim AS base
 
 RUN useradd --create-home --uid 10001 insights
@@ -15,15 +15,9 @@ COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /usr/local/bin/uv
 # for the version, so it may not float - and CI rejects an app whose FROM is :latest.
 RUN uv pip install --system --no-cache \
       "insights-sdk==0.1.0" \
-      "uvicorn[standard]==0.34.0" \
-      "jinja2==3.1.5"
+      "uvicorn[standard]==0.34.0"
 
-# The platform design system. Every app gets the same nav, the same tables and
-# the same auth-aware chrome without anyone copying CSS between repos.
-COPY design-system/ /opt/insights/design-system/
-
-ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
-    INSIGHTS_TEMPLATES=/opt/insights/design-system
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

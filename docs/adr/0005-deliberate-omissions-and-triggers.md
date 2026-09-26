@@ -62,21 +62,36 @@ Every tenant shares the runtime, the broker and the control plane (ADR-002).
 > acquired company — which invalidates the "organisational recourse" premise the whole isolation
 > model rests on. Also: a regulatory obligation naming physical separation.
 
-### 5. No real cloud infrastructure — stubs and fakes throughout
+### 5. No containers locally — a single-host process supervisor
 
-Sanctioned by the brief. `infra/` describes the target state (ECS Fargate behind a shared ALB,
-EventBridge for schedules, an identity edge) without provisioning it. Local runtime is
-`compose.yaml`.
+`./dev up` is a Python process supervisor: it seeds a SQLite file, starts two stub services
+and the tenant apps as plain processes, and puts the edge in front of them. There is no
+`compose.yaml`, no local container runtime, and no local registry.
 
-> **Trigger:** n/a for this exercise. In reality the first production tenant.
+The payoff is the setup instruction: *Python and uv, one command*. A reviewer with fifteen
+minutes runs it; a reviewer who first has to install a container runtime does not.
 
-### 6. No multi-environment promotion
+> **Trigger:** the first tenant whose app needs a native dependency the host cannot provide,
+> or the first time a local-versus-production difference costs a real debugging session. At
+> that point local becomes containers, and the rendered Dockerfile (`insights build`) already
+> exists to make that a small change.
 
-One environment. No dev → UAT → prod path, no promotion gates.
+### 6. Three environments as a contract; one backed by infrastructure
 
-> **Trigger:** the first tenant whose app affects a decision someone is accountable for — which,
-> notably, is People Analytics. **This is the omission most likely to be challenged**, and the
-> honest answer is that it is next, not never.
+`dev`, `uat` and `prod` are real in the *contract*: the manifest declares them with their
+approvers, the generated workflows promote an artefact by ref between them, and the platform
+refuses a production deploy to anyone outside `access.manage.owners`.
+
+What does not exist is three environments' worth of infrastructure. Locally there is one.
+
+This is a deliberate ordering, not an oversight: the promotion *shape* is the part that is
+hard to retrofit — once teams have deployed straight to production for a year, adding a gate
+is a political problem rather than a technical one. Standing up a second environment behind an
+existing contract is a week of infrastructure work.
+
+> **Trigger:** the first sign-off requirement that needs somewhere other than production to
+> sign off in. That is People Analytics, i.e. now — which is why this is first on the
+> README's "what I'd do next".
 
 ### 7. No agents, chat, or LLM features
 
@@ -166,6 +181,36 @@ bounded rather than open.
 > **Trigger:** the first real environment. I would write it as CDK in Python — it produces
 > CloudFormation, so it fits an organisation whose standard is CloudFormation, it is the same
 > language as the platform, and it synthesises and unit-tests locally without an AWS account.
+
+### 14. No CSRF protection
+
+Authentication is cookie-based and same-origin, which is what keeps any token out of the
+browser. The trade-off is cross-site request forgery, and the mitigation is currently only
+`SameSite=Lax` on the session cookie — there is no CSRF token and no middleware enforcing one.
+
+Nothing here is exposed: both example apps are read-only. The first tenant with a `POST` is.
+
+> **Trigger:** the first state-changing endpoint on the platform. The fix belongs in the SDK's
+> web middleware so that no team writes CSRF code and no team can forget to — the same
+> argument as redaction and identity.
+
+### 15. No Streamlit shape, though it is the one most wanted
+
+`web.type: streamlit` is **refused** by the manifest loader. Data teams want it, and it is the
+natural shape for an exploratory dashboard.
+
+Two things have to exist first, and neither is trivial: Streamlit has no middleware, so
+identity needs a shim that reads the edge's headers out of `st.context.headers`; and its own
+`/_stcore/health` only proves the process is alive, so the platform's health contract needs a
+sidecar. It also holds session state over a websocket, which means sticky sessions and a
+replica cap.
+
+Accepting the shape without those would move the failure from `insights doctor` on a laptop to
+a deploy in an environment — the wrong layer (ADR-004). Refusing early is the same rule the
+platform applies to tenants, applied to itself.
+
+> **Trigger:** the first team that actually asks. It is roughly a day of work, and it is the
+> omission most likely to be worth closing first.
 
 ## The tension
 

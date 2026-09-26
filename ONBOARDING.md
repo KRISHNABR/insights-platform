@@ -29,7 +29,7 @@ a lot.
 
 **What we don't do.** There's no portal, no data catalog you can browse, and no staging
 environment yet. Those are decisions rather than gaps —
-[ADR-005](docs/adr/0005-deliberate-omissions-and-triggers.md) lists all eleven of them with the
+[ADR-005](docs/adr/0005-deliberate-omissions-and-triggers.md) lists all fifteen of them with the
 trigger that would change our mind. If you hit one, tell us: you're the trigger.
 
 ---
@@ -40,7 +40,7 @@ You need:
 
 - **Your team's corporate group** (something like `MG-YOUR-TEAM`). Whoever administers
   your team's access has it.
-- **Python 3.11+** and [`uv`](https://docs.astral.sh/uv/).
+- **Python 3.12+** and [`uv`](https://docs.astral.sh/uv/).
 - To know which of the two shapes you're building:
 
 |  | `kind: web` | `kind: job` |
@@ -248,7 +248,10 @@ them isn't enough:
 insights access request --dataset hr.compensation --reason "quarterly equity review"
 ```
 
-That prints a request for the **dataset owner**, not for us. We can't approve it, and
+That **prints** the request — who to send it to, and the exact command they run. It does not
+file a ticket, and deliberately does not grant anything: the platform has no way to approve
+access to data it does not own. The dataset owner runs `insights access approve`, which is
+what writes the grant. We can't approve it, and
 that's the point: the platform team doesn't decide who reads your colleagues' salaries.
 While you wait, `insights doctor` will show the dataset as `NOT GRANTED` and your app
 will refuse to read it — at your desk, not in production.

@@ -10,25 +10,11 @@ KIND=$(python -c "from insights_sdk import config; print(config.manifest().kind)
 
 case "$KIND" in
   web)
-    # web.type decides what actually serves HTTP. The tenant never picks a
-    # command; they declared a shape and this resolves it.
-    TYPE=$(python -c "from insights_sdk import config; print(config.manifest().web_type)")
-    case "$TYPE" in
-      streamlit)
-        # Health sidecar first - it resolves every declared dataset, which
-        # Streamlit's own /_stcore/health does not.
-        python -m insights_sdk.runtime.health_sidecar --port 8001 &
-        exec streamlit run /app/src/app.py \
-          --server.port 8000 --server.address 0.0.0.0
-        ;;
-      *)
-        # dashboard | api | spa all run the same ASGI app; they differ only in
-        # what the tenant mounted on it.
-        exec python -m uvicorn main:app \
-          --host 0.0.0.0 --port 8000 --app-dir /app/src \
-          --no-access-log        # the SDK emits structured access logs itself
-        ;;
-    esac
+    # api and spa both run the same ASGI app; they differ only in what the tenant
+    # mounted on it. There is deliberately no other web shape - see ADR-005.
+    exec python -m uvicorn main:app \
+      --host 0.0.0.0 --port 8000 --app-dir /app/src \
+      --no-access-log        # the SDK emits structured access logs itself
     ;;
   job)
     # Runs to completion. The SDK's run_job() owns the exit-code contract:

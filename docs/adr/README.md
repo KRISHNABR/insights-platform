@@ -17,7 +17,7 @@ answers which question — read [`../ARCHITECTURE.md`](../ARCHITECTURE.md) first
 | [ADR-002](0002-tenant-isolation-and-data-access.md) | Shared data connections are **brokered, not handed out** — and the isolation line that draws | Operability for a team of three vs. what a compliance partner will accept |
 | [ADR-003](0003-operator-access-and-tenant-data.md) | Zero standing access to tenant data; redaction that raises at the emit point | Every control here makes the platform team's own job harder |
 | [ADR-004](0004-enforcement-and-platform-rules.md) | Enforce each rule at the earliest layer that makes it impossible to get wrong | Enforcement strength vs. tenant freedom |
-| [ADR-005](0005-deliberate-omissions-and-triggers.md) | Thirteen things deliberately not built, each with the trigger that reverses it | Completeness vs. honesty about who operates this |
+| [ADR-005](0005-deliberate-omissions-and-triggers.md) | Fifteen things deliberately not built, each with the trigger that reverses it | Completeness vs. honesty about who operates this |
 
 **Suggested order:** ADR-002 → ADR-003 → ADR-001 → ADR-004 → ADR-005. Two and three are where the
 design is most exposed and most deliberate.

@@ -88,7 +88,7 @@ Every component is a component to patch, debug and be paged for. This is the exp
 | ECS Fargate | EKS — no cluster, no node pools, no add-on lifecycle ([ADR-005 #12](adr/0005-deliberate-omissions-and-triggers.md)) |
 | Delegating governance to Unity Catalog | Owning our own classification and masking model ([ADR-002](adr/0002-tenant-isolation-and-data-access.md) alt. B) |
 | No server-rendered UI framework | Jinja + a design system + `table()`/`chart()` helpers — a UI framework is not a thing three people should own |
-| No policy engine, no portal, no service mesh | [ADR-005](adr/0005-deliberate-omissions-and-triggers.md), thirteen omissions |
+| No policy engine, no portal, no service mesh | [ADR-005](adr/0005-deliberate-omissions-and-triggers.md), fifteen omissions |
 | Documentation as enforcement of **last resort** | Rules in docs decay silently, and nobody has time to police them |
 
 **The meta-trigger:** ADR-005 says the whole ADR should be reopened when the platform team grows
@@ -179,7 +179,7 @@ flowchart LR
   Q2["<b>Enforcement</b><br/>where do rules live?"] --> A4["ADR-004<br/><i>earliest layer that makes it<br/>impossible to get wrong</i>"]
   Q3["<b>Isolation</b><br/>what drew the line?"] --> A2["ADR-002<br/><i>brokered data · tier on the<br/>data's sensitivity</i>"]
   Q4["<b>Operator access</b><br/>granted · constrained · evidenced"] --> A3["ADR-003<br/><i>none standing · redaction raises<br/>owner-approved break-glass</i>"]
-  Q5["<b>Omissions</b><br/>and their triggers"] --> A5["ADR-005<br/><i>thirteen, each with<br/>the trigger that reverses it</i>"]
+  Q5["<b>Omissions</b><br/>and their triggers"] --> A5["ADR-005<br/><i>fifteen, each with<br/>the trigger that reverses it</i>"]
 ```
 
 
@@ -289,7 +289,7 @@ could otherwise be read as "this works".
 
 ### Deliberate omissions, and what would trigger building them
 
-**→ [ADR-005](adr/0005-deliberate-omissions-and-triggers.md)** — thirteen, each with a trigger.
+**→ [ADR-005](adr/0005-deliberate-omissions-and-triggers.md)** — fifteen, each with a trigger.
 
 | Not built | Trigger |
 |---|---|
@@ -306,6 +306,8 @@ could otherwise be read as "this works".
 | Machine-to-machine exposure / API Gateway | The first system or agent calling an app as a tool |
 | **Not on Kubernetes** | Workload-level policy, a mesh, per-tenant NetworkPolicy — **or the org already operating EKS as a shared service** |
 | **No real IaC** | The first real environment. This is what most weakens "production grade" |
+| No CSRF protection | The first state-changing endpoint. Both example apps are read-only |
+| No Streamlit shape | The first team that asks. Refused by the manifest rather than accepted and failing at deploy |
 
 **The one least comfortable to defend** is multi-environment promotion, because its trigger has
 already fired. Everything is environment-aware and the workflows exist; they are simply not
@@ -319,7 +321,7 @@ Every claim above maps to code and a test. The full table is in
 [ARCHITECTURE § Evidence map](ARCHITECTURE.md#evidence-map--every-claim-and-where-it-is-enforced).
 
 ```bash
-# 55 tests, each turning an ADR claim into evidence
+# 60 test cases, each turning an ADR claim into evidence
 cd insights-sdk && uv run --with pytest --with pyyaml --with fastapi python -m pytest -q
 ```
 

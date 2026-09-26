@@ -138,7 +138,7 @@ reviewed like code; `runtime/` is what serves traffic.
 | **Isolation** — shared vs not | Everything is shared except the data path. The tier follows the **data's** sensitivity, not the tenant's identity | [ADR-002](docs/adr/0002-tenant-isolation-and-data-access.md) |
 | **Operator access** | Redaction raises at emit; no standing access to rows; break-glass approved by the **dataset owner**, time-boxed, audited, tenant notified | [ADR-003](docs/adr/0003-operator-access-and-tenant-data.md) |
 | **Enforcement** | Earliest layer that makes a rule impossible to get wrong. The diagnostic: *what does the day-one guide have to warn people about?* | [ADR-004](docs/adr/0004-enforcement-and-platform-rules.md) |
-| **Deliberate omissions** | Thirteen, each with the trigger that reverses it | [ADR-005](docs/adr/0005-deliberate-omissions-and-triggers.md) |
+| **Deliberate omissions** | Fifteen, each with the trigger that reverses it | [ADR-005](docs/adr/0005-deliberate-omissions-and-triggers.md) |
 
 A fuller mapping, including the brief's context constraints, is in
 [`docs/BRIEF-COVERAGE.md`](docs/BRIEF-COVERAGE.md).

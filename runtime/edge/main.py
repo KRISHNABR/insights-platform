@@ -93,6 +93,25 @@ async def proxy(app_name: str, path: str, request: Request):
             status_code=401,
         )
 
+    # --- LAYER 1 authorization: may this person reach this app at all? ------------
+    #
+    # The cheapest possible rejection, and the reason it belongs here rather than in
+    # the app: someone with no business in an app cannot probe its routes, and the
+    # app never runs a line of code for them. `groups` is reconciled from the app's
+    # manifest at deploy time - the edge does not read tenant manifests.
+    #
+    # Layer 2 (require_role) and layer 3 (dataset entitlement) still apply inside.
+    allowed = set(entry.get("groups") or ())
+    caller_groups = set(USERS[subject]["groups"])
+    if allowed and not (allowed & caller_groups):
+        return JSONResponse(
+            {
+                "error": f"{subject} is not a member of any group that may use '{app_name}'",
+                "hint": "ask the app's owners to add your group to access.roles in app.yaml",
+            },
+            status_code=403,
+        )
+
     # --- 2. strip, then 3. inject --------------------------------------------------
     headers = {
         key: value

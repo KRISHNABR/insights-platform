@@ -88,11 +88,20 @@ have been one more thing a compliance partner has to audit *separately*.
 
 **In one line:** *Unity Catalog owns the data. We own the application platform, and the bridge.*
 
-### 3. No stored data credential exists
+### 3. The credential story, stated per environment
 
 The sharpest objection to any platform like this is: *if the platform team manages the
-credentials, the platform team can read the data.* The answer is not to guard the credential
-better. It is to **not have one**.
+credentials, the platform team can read the data.* The answer differs by environment, and
+conflating the two is how a design document starts contradicting its own compliance page.
+
+**Locally — a credential exists and the process can read it.** The stub warehouse is a file
+whose path is in the app's environment. There is nothing secret in it, but the seam is real:
+a local process can read the whole file regardless of what the broker would have allowed.
+This is a property of the *stub*, not of the design, and `COMPLIANCE.md` says so in the same
+words.
+
+**On the Databricks target — the broker holds no long-lived data credential.** That is the
+design below, and it is what a compliance partner is being asked to review.
 
 | | Interactive app | Scheduled job |
 |---|---|---|
