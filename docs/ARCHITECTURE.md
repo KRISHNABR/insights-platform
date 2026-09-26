@@ -190,6 +190,39 @@ takes the harder upgrade story and spends the design effort on making it surviva
 fired, because it is "the first tenant whose app affects a decision someone is accountable for",
 which is People Analytics, i.e. now. It is next, not never.*
 
+## Evidence map — every claim, and where it is enforced
+
+The brief says working code matters as evidence that the design survives contact with reality.
+This is that map. Each row is a claim made in an ADR, the code that makes it true, and the test
+that fails if it stops being true.
+
+| Claim | Enforced in | Proven by |
+|---|---|---|
+| A client cannot assert its own identity | `runtime/edge/main.py` strips `X-Auth-*`; `identity.from_headers` discards untrusted values rather than keeping them | `test_a_client_cannot_assert_its_own_identity` |
+| An app outside the edge can read nothing | `Caller.groups` is a property returning `()` unless trusted — fail-closed as a data structure, not as a discipline | `test_an_app_run_outside_the_edge_can_read_nothing` |
+| Knowing a dataset's name is not access | broker step 2, against the tenant's own manifest | `test_an_undeclared_dataset_is_refused` |
+| The platform cannot be used as a discovery oracle | entitlement is checked *before* the catalog, so "doesn't exist" and "not yours" are the same error | `test_a_nonexistent_dataset_is_indistinguishable_from_one_you_may_not_have` |
+| Declaring a restricted dataset is not enough | broker step 5 requires a grant written by the dataset owner | `test_declaring_a_restricted_dataset_is_not_enough` |
+| SQL cannot reach past the declared dataset | broker step 6 rewrites the alias, then rejects any other dataset's name or table | `test_sql_cannot_reach_past_the_declared_dataset` |
+| The same SQL is portable across environments | the alias resolves to a different physical table per environment | `test_the_same_sql_reads_a_different_table_in_a_different_environment` |
+| A tenant cannot unmask its own restricted fields | a service caller's roles come from the **grant**, never from `access.roles` in its own repo | `test_a_job_without_a_granted_role_is_still_masked` |
+| A tenant cannot declare its own data non-sensitive | `config._FORBIDDEN_ANYWHERE` rejects the manifest; `control/cli/gates.py` blocks the push | `test_entitlement.py`, and try it — the loader names the ADR |
+| Telemetry cannot carry rows | `obs._reject_payloads` raises at emit | `test_a_log_record_cannot_carry_rows` |
+| Restricted field names cannot appear in logs | armed by broker step 5 from the catalog's `sensitive_fields` | `test_reading_restricted_data_arms_the_field_assertion` |
+| There is no way round the broker | nothing exports a connection — and a test asserts the *shape* of the SDK, so adding one fails CI | `test_no_escape_hatch.py` |
+| The upgrade story is driven by data, not email | `deprecation.py` emits once per symbol, naming app, version and symbol | `test_deprecation_telemetry.py` |
+| Generated files can be re-generated | `insights upgrade-scaffold` re-renders exactly the platform-owned files | run it — `--check` reports drift |
+
+Two of these exist *because* the code was written rather than only designed:
+
+- **The service-identity question.** A scheduled job has no human, so "may this caller see
+  salaries?" cannot be answered from corporate groups. The first implementation gave the job the
+  manifest's `access.roles` — which lets a team unmask compensation by editing a line in its own
+  repository. The roles now come from the grant.
+- **The discovery oracle.** A test originally asserted that an unknown dataset raised a distinct
+  error. It failed, correctly: distinguishing "doesn't exist" from "not yours" would let any
+  tenant enumerate the registry by guessing names.
+
 ## Reading order
 
 1. This page

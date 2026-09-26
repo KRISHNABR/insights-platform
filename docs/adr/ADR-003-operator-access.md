@@ -148,3 +148,24 @@ management chain. That is slower, and it is a deliberate choice rather than an o
   not tolerance.
 * Attempts to log payloads, caught by the SDK. A rising count means the documentation or the
   ergonomics are wrong.
+
+## What is actually built, and what is not
+
+`insights compliance-report` renders break-glass events, which could reasonably be read as
+"break-glass works". Being precise, because the difference matters to a reviewer:
+
+| | Status |
+|---|---|
+| Redaction raising at the emit point | **built** — `obs.py`, and `tests/test_telemetry_boundary.py` |
+| Per-dataset sensitive-field assertion, armed when the broker resolves a restricted dataset | **built** — the field list comes from the catalog, so a tenant cannot shorten it |
+| Every read audited with caller, classification and masked-field count | **built** — `obs.audit_read`, written to `runtime/sinks/audit.jsonl` |
+| Zero standing operator access | **built, structurally** — the platform team holds no grants, and the broker's only path to data requires one |
+| The break-glass **data model** — expiry, second approver, tenant notification, usage count | **built** — `control/registry/grants.yaml`, and the report reads it |
+| The break-glass **workflow** — `insights access breakglass request` / `approve` | **not built.** The evidence trail and the schema exist; the command to create an entry does not |
+
+The workflow was the first thing cut when time ran short, and it was the right cut: a fake
+implementation would have looked more finished and been worth less than an honest schema plus
+this paragraph. What it costs today is that an operator needing emergency access has to have an
+owner hand-edit `grants.yaml` — which is auditable, and slow, and exactly the friction the
+control is supposed to create. It is the first thing to build after the items in the README's
+"what I'd do next".
