@@ -67,7 +67,7 @@ breaks a small team. Every design choice was tested against twenty-five, not fiv
 |---|---|
 | No per-tenant infrastructure | 25 dedicated stacks would consume the whole team |
 | One reusable CI workflow, called in four lines | Improving a pipeline is one commit, not 25 pull requests |
-| A published base-image family, with per-app Dockerfiles built on it | Teams own their image; the platform owns the bases they build on. A CVE is one base rebuild plus a bump each app must take — [ADR-004](adr/0004-enforcement-and-platform-rules.md) is explicit that this is the cost of that control |
+| Per-app Dockerfiles, generated once and then owned by the team | The platform publishes no base image, so it promises no patching it cannot deliver. CI checks two things: the base is pinned, and the final USER is not root — [ADR-004](adr/0004-enforcement-and-platform-rules.md) states what that costs |
 | Deprecation telemetry | At 25 apps you cannot ask everyone what they use — you have to measure it |
 | Groups derived from the manifest, never hand-created | Anything done by hand for 25 tenants is wrong for at least one, and nobody knows which |
 

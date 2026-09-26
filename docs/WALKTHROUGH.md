@@ -55,8 +55,8 @@ registered 3 app(s) -> apps.local.json
   console on :8102
 
 edge on http://localhost:8080
-  the console     http://localhost:8080/a/console/?as=suraj@corp.example
-  the dashboard   http://localhost:8080/a/headcount-dashboard/?as=krishna@corp.example
+  the console     http://localhost:8080/apps/console/?as=suraj@corp.example
+  the dashboard   http://localhost:8080/apps/headcount-dashboard/?as=krishna@corp.example
   ...
 ctrl-c to stop
 ```
@@ -114,7 +114,7 @@ reports that it is empty; it never writes the value, locally or in production.
 The platform team's own tool, hosted *on* the platform.
 
 ```
-http://localhost:8080/a/console/?as=suraj@corp.example
+http://localhost:8080/apps/console/?as=suraj@corp.example
 ```
 
 **You should see** a dark page, header `suraj@corp.example · MG-PLATFORM`, four tabs:
@@ -132,7 +132,7 @@ leak what the platform never collected.
 **Check:** sign in as a tenant instead and you still get in:
 
 ```
-http://localhost:8080/a/console/?as=krishna@corp.example
+http://localhost:8080/apps/console/?as=krishna@corp.example
 ```
 
 A team should not have to ask the platform team to see their own app's health.
@@ -142,13 +142,13 @@ A team should not have to ask the platform team to see their own app's health.
 ## Step 4 — The dashboard (an existing web app)
 
 ```
-http://localhost:8080/a/headcount-dashboard/?as=krishna@corp.example
+http://localhost:8080/apps/headcount-dashboard/?as=krishna@corp.example
 ```
 
 **You should see** a headcount table. Now check it from the command line:
 
 ```bash
-B=http://localhost:8080/a/headcount-dashboard
+B=http://localhost:8080/apps/headcount-dashboard
 J=/tmp/jar
 
 # sign in once — ?as= stands in for the corporate SSO redirect
@@ -351,8 +351,8 @@ shifted** — `attrition-api` sorts first alphabetically.
 
 ```bash
 E=http://localhost:8080
-curl -s -c /tmp/v -o /dev/null "$E/a/attrition-api/healthz?as=vidya@corp.example"
-curl -s -b /tmp/v "$E/a/attrition-api/api/attrition?month=2026-09"
+curl -s -c /tmp/v -o /dev/null "$E/apps/attrition-api/healthz?as=vidya@corp.example"
+curl -s -b /tmp/v "$E/apps/attrition-api/api/attrition?month=2026-09"
 ```
 ```json
 {"month":"2026-09","departments":[{"dept":"Engineering","headcount":184,"attrition_pct":1.09}, ...]}
@@ -361,7 +361,7 @@ curl -s -b /tmp/v "$E/a/attrition-api/api/attrition?month=2026-09"
 **Check isolation** — krishna owns the *other* app:
 
 ```bash
-curl -s -b $J "$E/a/attrition-api/api/attrition"
+curl -s -b $J "$E/apps/attrition-api/api/attrition"
 ```
 ```json
 {"error":"krishna@corp.example is not a member of any group that may use 'attrition-api'", ...}
@@ -510,7 +510,7 @@ INSIGHTS_REGISTRY_DIR=../insights-platform/control/registry \
 | App started, behaving oddly | `uv run insights logs --app X` |
 | A query failing | `uv run insights connections --probe` |
 | Is it registered? | `uv run insights status` |
-| Anything else | the console, `/a/console/` |
+| Anything else | the console, `/apps/console/` |
 
 **`doctor` will not help with a startup failure** — it checks your manifest, and a
 manifest can be perfect while the process fails to bind a port.

@@ -184,28 +184,14 @@ Files listed in `scaffold.PLATFORM_OWNED` live in tenant repos but belong to us.
 If you add a new generated file, **add it to `PLATFORM_OWNED`** or it will silently rot — there
 is a test that asserts every rendered file is listed.
 
-### Changing a base image
+### A team needs a system package, or a different Python version
 
-```bash
-# edit runtime/base-image/python-web.Dockerfile
-# bump BASE_VERSIONS in insights_sdk/cli/scaffold.py
-# rebuild and push; apps pick it up on their next build
-```
+Nothing to do. They own their Dockerfile (ADR-004) — they add the `apt-get` line or
+change the `FROM`, and CI checks only that the base is pinned and the final `USER` is
+not root.
 
-A CVE in a base image is one rebuild plus a redeploy of affected apps — that property is most of
-the argument for a paved road. Since ADR-004 tenants own their Dockerfile, so a base change is
-not a silent rebuild any more: bump BASE_VERSIONS, and every app's `doctor` and deploy gate
-starts reporting the stale pin until they bump their FROM. Announce it; do not assume they look.
-
-### Adding a base image family member
-
-Do this when **two or more** teams need the same thing, not on the first request. It is a
-permanent maintenance commitment.
-
-1. Add `runtime/base-image/python-<name>.Dockerfile`.
-2. Add it to `VALID_BASES` in `insights_sdk/config.py` and `BASE_VERSIONS` in `scaffold.py`.
-3. If it changes how the app starts, extend `runtime/base-image/entrypoint.sh`.
-4. Document it in `runtime/base-image/README.md`.
+We publish no base image, so there is nothing here for anyone to wait on us for. The
+cost, stated in ADR-004: nobody patches a tenant's base but the tenant.
 
 ### Adding a data connection type
 
@@ -238,7 +224,7 @@ everyone at once, which is the cost of the thin-caller pattern.
 ### Where to look first
 
 ```
-insights up                       # the console registers itself at /a/console/
+insights up                       # the console registers itself at /apps/console/
 ```
 
 Four views, all read-only, all telemetry and never rows: **Apps** (what exists, last
@@ -329,7 +315,7 @@ Read the error — they name the rule and the ADR. The common ones:
 | `runtime.sdk is pinned` | They wrote `==`. Floors only |
 | `access.manage.owners is required` | No owner group, or they used an individual |
 | `not entitled to X` | Declared in neither `app.yaml` nor granted |
-| `runtime.base is not published` | They invented a base image |
+
 
 None of these should be worked around. If one is wrong, fix the rule.
 

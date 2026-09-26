@@ -31,7 +31,7 @@ no credentials. Directory names matter — the local loop finds the sibling repo
 name. Use `uv run insights up --port 9100` if 8080 is taken.
 
 ```bash
-open "http://localhost:8080/a/console/?as=suraj@corp.example"
+open "http://localhost:8080/apps/console/?as=suraj@corp.example"
 ```
 
 Appending `?as=` once is the whole local login; after that a session cookie carries it.
@@ -41,7 +41,7 @@ Appending `?as=` once is the whole local login; after that a session cookie carr
 ```bash
 # 1 · a client cannot assert its own identity — you stay krishna, not admin
 curl -b cookies.txt -H "X-Auth-Groups: admin" \
-     http://localhost:8080/a/headcount-dashboard/api/me
+     http://localhost:8080/apps/headcount-dashboard/api/me
 
 # 2 · someone outside the app cannot probe its routes at all
 #     krishna on attrition-api → 403, from the edge, before any app code runs

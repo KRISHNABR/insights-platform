@@ -210,7 +210,7 @@ sequenceDiagram
     participant A as Tenant app
     participant W as Their warehouse
 
-    B->>E: GET /a/attrition-api/api/attrition
+    B->>E: GET /apps/attrition-api/api/attrition
     Note over E: no session, so 401
     B->>E: sign in — OIDC, or ?as= locally
     E-->>B: 303 and an HttpOnly session cookie
@@ -354,7 +354,7 @@ outright. `app.yaml` is in git; a credential there is in the history forever, an
 | Did it boot? | `insights logs --app X --startup` — the **process** log |
 | What did it do? | `insights logs --app X` — the **telemetry** |
 | Can it reach its systems? | `insights connections --probe`, and `/healthz` |
-| Across the fleet? | the console, at `/a/console/` |
+| Across the fleet? | the console, at `/apps/console/` |
 
 The startup/telemetry split matters: an app that dies on import emits **no** telemetry,
 so the structured view is empty and reads as "no traffic" rather than "crashed".

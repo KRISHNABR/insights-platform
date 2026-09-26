@@ -99,7 +99,7 @@ def me(request: Request) -> dict:
 
 
 @app.get("/api/apps")
-def apps() -> JSONResponse:
+def apps(request: Request) -> JSONResponse:
     """Every registered app, with whatever the telemetry can say about it."""
     registry = _registered()
     events = _records("events")
@@ -114,6 +114,7 @@ def apps() -> JSONResponse:
         if record.get("level") in ("warn", "error"):
             errors[name] += 1
 
+    caller_groups = set(_caller(request)["groups"])
     out = []
     for name, entry in sorted(registry.items()):
         manifest_path = Path(entry.get("path", "")) / "app.yaml"
@@ -129,7 +130,12 @@ def apps() -> JSONResponse:
                     # references by construction (the loader refuses anything else).
                     "secret": spec.get("secret"),
                 })
+        allowed = set(entry.get("groups") or ())
         out.append({
+            # "mine" = a group you are in may use this app. The console shows
+            # everything and marks yours; hiding other teams' apps would make the
+            # platform feel smaller than it is and help nobody.
+            "mine": bool(caller_groups & allowed) if allowed else True,
             "name": name,
             "kind": entry.get("kind"),
             "team": entry.get("team"),
@@ -233,3 +239,118 @@ def logs(app_name: str | None = None, stream: str = "events", limit: int = 100) 
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
     return HTMLResponse((HERE / "index.html").read_text())
+
+
+def _manifest_for(name: str) -> tuple[dict, str]:
+    """The app's manifest, parsed and raw.
+
+    Safe to show: the loader refuses a credential anywhere in this file, so there is
+    nothing in it to redact. `secret:` is a NAME whose value lives somewhere neither
+    this console nor the platform team can read.
+    """
+    entry = _registered().get(name) or {}
+    path = Path(entry.get("path", "")) / "app.yaml"
+    if not path.is_file():
+        return {}, ""
+    raw = path.read_text()
+    return (yaml.safe_load(raw) or {}), raw
+
+
+@app.get("/api/apps/{name}")
+def app_detail(name: str, request: Request) -> JSONResponse:
+    registry = _registered()
+    if name not in registry:
+        return JSONResponse({"error": f"no app '{name}'"}, status_code=404)
+
+    entry = registry[name]
+    parsed, raw = _manifest_for(name)
+    caller = _caller(request)
+    groups = set(caller["groups"])
+    manage = ((parsed.get("access") or {}).get("manage") or {})
+
+    events = [r for r in _records("events") if r.get("app") == name]
+    failures = [r for r in events if r.get("event") == "connection_failed"]
+    queries = [r for r in events if r.get("event") == "query_executed"]
+
+    return JSONResponse({
+        "name": name,
+        "kind": entry.get("kind"),
+        "team": entry.get("team"),
+        "route": (parsed.get("web") or {}).get("route"),
+        "schedule": entry.get("schedule"),
+        "port": entry.get("port"),
+        "running": bool(entry.get("port")),
+        "manifest": raw,
+        "connections": [
+            {"name": c.get("name"), "engine": c.get("engine") or c.get("type"),
+             "secret": c.get("secret"),
+             "local": bool(c.get("local"))}
+            for c in (parsed.get("connections") or [])
+        ],
+        "telemetry": {"events": len(events), "queries": len(queries),
+                      "failures": len(failures)},
+        "recent": sorted(events, key=lambda r: r.get("ts", ""))[-20:],
+        # What YOU may do here. The console asserts nothing - it reports what the
+        # app's own access.manage says about the groups the edge vouched for.
+        "you": {
+            "is_owner": bool(groups & set(manage.get("owners") or ())),
+            "is_contributor": bool(groups & (set(manage.get("owners") or ())
+                                             | set(manage.get("contributors") or ()))),
+        },
+    })
+
+
+@app.post("/api/apps/{name}/run")
+def run_job(name: str, request: Request) -> JSONResponse:
+    """Run a job now. The console's first WRITE endpoint.
+
+    Authorized the same way everything else is: the edge established who you are, and
+    `access.manage` in the app's own manifest says whether you may. A contributor or
+    an owner may run it; a reader may not - running a job is an action, not a view.
+    """
+    registry = _registered()
+    entry = registry.get(name)
+    if entry is None:
+        return JSONResponse({"error": f"no app '{name}'"}, status_code=404)
+    if entry.get("kind") != "job":
+        return JSONResponse({"error": f"'{name}' is not a job"}, status_code=400)
+
+    caller = _caller(request)
+    if not caller["trusted"]:
+        return JSONResponse({"error": "not signed in"}, status_code=401)
+
+    parsed, _ = _manifest_for(name)
+    manage = ((parsed.get("access") or {}).get("manage") or {})
+    allowed = set(manage.get("owners") or ()) | set(manage.get("contributors") or ())
+    if not (set(caller["groups"]) & allowed):
+        return JSONResponse({
+            "error": f"{caller['subject']} is not a contributor or owner of '{name}'",
+            "hint": "running a job is an action, not a view - readers cannot",
+        }, status_code=403)
+
+    import subprocess
+    import sys
+
+    started = subprocess.run(
+        [sys.executable, "src/main.py"],
+        cwd=Path(entry["path"]), capture_output=True, text=True, timeout=120,
+        env={**os.environ, "INSIGHTS_APP": name,
+             "INSIGHTS_APP_MANIFEST": str(Path(entry["path"]) / "app.yaml")},
+    )
+    # Return the structured records the run emitted, not its raw stdout - the same
+    # rule as everywhere else, and it keeps this endpoint unable to leak a payload.
+    records = []
+    for line in started.stdout.splitlines():
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    return JSONResponse({
+        "app": name,
+        "exit_code": started.returncode,
+        "triggered_by": caller["subject"],
+        "events": records,
+        "stderr": started.stderr.splitlines()[-5:] if started.returncode else [],
+    })

@@ -47,15 +47,13 @@ jobs:
           aws-region: eu-west-1
       - uses: aws-actions/amazon-ecr-login@v2
 
-      # The tenant has no Dockerfile. The platform renders one from
-      # runtime.base + runtime.packages in app.yaml, so the image a team gets is
-      # a consequence of what they declared, not of what they wrote.
+      # Build the TENANT'S Dockerfile. The platform does not render one and does
+      # not publish a base image (ADR-004) - CI has already checked the two things
+      # that matter: the base is pinned, and the final USER is not root.
       - id: push
         run: |
-          uv run python .platform/control/cli/render_dockerfile.py \
-            --manifest app.yaml --out Dockerfile.generated
           IMAGE="$ECR/insights/${{ inputs.app }}:${{ github.sha }}"
-          docker build -f Dockerfile.generated -t "$IMAGE" .
+          docker build -f Dockerfile -t "$IMAGE" .
           docker push "$IMAGE"
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
