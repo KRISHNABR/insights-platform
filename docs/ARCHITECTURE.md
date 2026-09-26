@@ -231,4 +231,4 @@ Two of these exist *because* the code was written rather than only designed:
 4. [ADR-001 Reuse and upgrade](adr/ADR-001-reuse-and-upgrade.md) — the mechanism everything rests on
 5. [ADR-004 Enforcement](adr/ADR-004-enforcement-placement.md) · [ADR-005 Omissions](adr/ADR-005-deliberate-omissions.md)
 
-Then [`ONBOARDING.md`](../../ONBOARDING.md) for what all of this looks like to team #6 on day one.
+Then [`ONBOARDING.md`](../ONBOARDING.md) for what all of this looks like to team #6 on day one.
