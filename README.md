@@ -72,6 +72,10 @@ curl -b cookies.txt -H "X-Auth-Groups: comp-analyst" \
 
 # 4 · the evidence a reviewer gets
 uv run insights compliance-report --dataset hr.compensation
+
+# 5 · the two logs, which answer two different questions
+uv run insights logs --app headcount-dashboard --startup   # did it boot?
+uv run insights logs --stream audit                        # every read of a governed dataset
 ```
 
 ---

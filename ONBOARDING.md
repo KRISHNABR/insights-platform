@@ -239,34 +239,45 @@ people = fetch("directory.people", params={"dept": "Engineering"})
 
 If you call the wrong verb, the error tells you which one to use.
 
-### If the dataset is restricted
+### Getting access — we are not in that loop
 
-Some datasets — compensation is the obvious one — need a second approval. Declaring
-them isn't enough:
+The platform does not own the data and cannot grant access to it. What it does is tell you
+**exactly what to ask for, and who to ask**:
 
 ```bash
-insights access request --dataset hr.compensation --reason "quarterly equity review"
+uv run insights access --reason "quarterly equity review"
 ```
 
-That **prints** the request — who to send it to, and the exact command they run. It does not
-file a ticket, and deliberately does not grant anything: the platform has no way to approve
-access to data it does not own. The dataset owner runs `insights access approve`, which is
-what writes the grant. We can't approve it, and
-that's the point: the platform team doesn't decide who reads your colleagues' salaries.
-While you wait, `insights doctor` will show the dataset as `NOT GRANTED` and your app
-will refuse to read it — at your desk, not in production.
+```
+  hr.compensation   owner: MG-PEOPLE-ANALYTICS   not granted
 
-Restricted datasets come with three things you'll notice:
+    Send to MG-PEOPLE-ANALYTICS:
 
-1. Some fields come back as `***` — masked because *you* aren't entitled to them.
-   In production that masking is applied by the data platform itself (Unity Catalog
-   column masks), not by us, so it applies the same way whether you read through
-   this platform or open a notebook.
+      Please grant read access on hr.compensation
+      to the service identity  sp-forecast-dashboard
+      for the app              forecast-dashboard (demand-planning)
+```
+
+Two things are worth understanding here.
+
+**Interactive requests run as you.** When someone opens your app, their own identity reaches
+the data platform, so it applies *their* grants and *their* column masks. If they can read it
+in a notebook, they can read it here; if they cannot, they cannot. You do not manage that.
+
+**Unattended work runs as your app.** A 06:00 job has nobody to inherit access from, so it acts
+as its own service identity — `sp-<your-app>`, derived from your app name. You do not declare
+it and you cannot change it; that is deliberate, because access is granted *to identities*, and
+a team that could name its own could claim another app's.
+
+So for a scheduled job, someone has to grant `sp-<your-app>` in the data platform. `insights
+doctor` checks whether that has happened and fails at your desk rather than at 06:00.
+
+Restricted datasets come with two more things you will notice:
+
+1. Some fields come back as `***`. In production that masking is applied by the data platform
+   itself, per principal, on every path to the data — so a notebook sees the same thing.
 2. Your logs are checked at write time for field names from that dataset, and the logger
    *raises* if one appears. See §5.
-3. Every read is recorded with who, what and how many rows.
-
----
 
 ## 4 · Check it before you push
 

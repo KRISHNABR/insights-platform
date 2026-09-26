@@ -38,6 +38,19 @@ SECRET_PATTERNS = [
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
 ]
 
+#: Directories the secret scan never descends into: not written by the team, and
+#: scanning them is both slow and a source of false positives.
+SCAN_SKIP_DIRS = frozenset({
+    ".git", ".venv", "venv", "node_modules", "__pycache__",
+    ".pytest_cache", ".ruff_cache", ".mypy_cache", "dist", "build", ".uv",
+})
+
+#: Binary-ish files a text secret scan cannot say anything useful about.
+SCAN_SKIP_SUFFIXES = frozenset({
+    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".db", ".sqlite",
+    ".so", ".dylib", ".whl", ".zip", ".gz", ".lock",
+})
+
 
 def fail(message: str) -> None:
     print(f"::error::{message}")
@@ -70,10 +83,11 @@ def main() -> int:
         except InsightsError as exc:
             fail(f"dataset {request.dataset}: {exc}")
             continue
-        if resolved.restricted and not grants.for_app(request.dataset, manifest.app):
+        if resolved.restricted and not grants.for_identity(request.dataset, manifest.service_identity):
             fail(
-                f"{request.dataset} is restricted and not granted to {manifest.app}. "
-                f"The dataset owner ({resolved.dataset.owner}) must approve it first."
+                f"{request.dataset} is restricted and not granted to {manifest.service_identity}. "
+                f"We cannot grant it here - {resolved.dataset.owner} owns the data and grants it "
+                f"in the data platform. This gate only checks that they already did."
             )
 
     # 3. the SDK floor is inside the support window (ADR-001, N-2)
@@ -95,12 +109,24 @@ def main() -> int:
             )
 
     # 4. no secrets committed
+    #
+    # Scan what the TEAM wrote, not what their tools downloaded. An earlier version
+    # walked everything, which meant it scanned .venv/ - tens of thousands of files,
+    # and site-packages ships test fixtures containing literal private keys, so the
+    # gate would fail a clean repo because of a dependency's test data.
     for path in Path(".").rglob("*"):
-        if not path.is_file() or ".git/" in str(path) or path.suffix in {".png", ".jpg", ".db"}:
+        if any(part in SCAN_SKIP_DIRS for part in path.parts):
+            continue
+        if path.suffix in SCAN_SKIP_SUFFIXES:
             continue
         try:
+            if not path.is_file():
+                continue
             text = path.read_text(errors="ignore")
         except OSError:
+            # Unreadable (permissions, a broken symlink, a vanished temp file) is not
+            # a finding. Note `is_file()` is INSIDE the try: it stats, so it raises too,
+            # and having it outside meant one unreadable file crashed the whole gate.
             continue
         for pattern in SECRET_PATTERNS:
             if pattern.search(text):

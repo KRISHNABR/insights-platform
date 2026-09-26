@@ -222,7 +222,7 @@ if __name__ == "__main__":
 
 | Question | Declared as | What the platform does |
 |---|---|---|
-| Who am I running as? | — | A service identity, `svc:comp-report`. There is no logged-in human at 6am |
+| Who am I running as? | — | A service identity, `sp-comp-report`. There is no logged-in human at 6am |
 | How long may I run? | `job.timeout: 30m` | SIGTERM at 30m, SIGKILL 30s later |
 | What if I fail? | `job.retries: 2` | Retries with backoff, then `on_failure` pages the owners |
 | Last run still going? | `job.concurrency: forbid` | Skips this run — the safe default for anything that writes |
@@ -250,7 +250,7 @@ The manifest is not documentation. Every line turns into something real at deplo
 | `runtime.base` | Which published base image is built FROM |
 | `runtime.size` | ECS CPU/memory, desired count, and ALB stickiness for `streamlit` |
 | `runtime.sdk` | Checked against the support window; CI fails if it disagrees with `pyproject.toml` |
-| `data[].dataset` | **An IAM policy statement** on the task role, allowing exactly those datasets' secrets — nothing else |
+| `data[].dataset` | The scope of the app's service identity: **an IAM policy statement** allowing exactly those datasets' resources, and the list `insights doctor` verifies against the data platform's grants. It does **not** grant anything — the data owner does that |
 | `web.type` | Base image, identity shim and health contract for that shape |
 | `web.route` | An ALB listener rule |
 | `job.schedule` + `timezone` | An EventBridge Scheduler rule |
@@ -411,7 +411,7 @@ whole interaction rather than just the first page load.
 
 | Caller | How identity is established | What it may read |
 |---|---|---|
-| **A scheduled job** | The scheduler constructs `svc:comp-report`, trusted because the *platform* built it, not a network client. Groups come from `access.manage.owners` | `data[]` in its manifest, plus an owner's grant if restricted. Unmasking roles come from the **grant**, never its own manifest |
+| **A scheduled job** | The scheduler constructs `sp-comp-report`, trusted because the *platform* built it, not a network client. Groups come from `access.manage.owners` | `data[]` in its manifest, plus an owner's grant if restricted. Unmasking roles come from the **grant**, never its own manifest |
 | **An app calling another app** | **Not supported today.** No service-to-service tokens. The trigger is the first real need; until then the honest answer is that it would be a new trust boundary and deserves its own decision | — |
 | **A platform engineer** | Their own SSO identity — which carries **no** dataset grants. Reading tenant rows needs break-glass: owner-approved, time-boxed, audited, tenant notified | nothing by default |
 
@@ -496,7 +496,7 @@ flowchart TB
   end
   subgraph J["Scheduled job — nobody is present"]
     TR["ECS task role"] --> WIF["workload identity federation<br/>(OIDC, no client secret)"]
-    WIF --> ST["a short-lived token for <b>svc:comp-report</b>"]
+    WIF --> ST["a short-lived token for <b>sp-comp-report</b>"]
     ST --> UC2["Unity Catalog sees the service principal<br/>applies ITS grants"]
   end
 ```
@@ -519,11 +519,17 @@ The residual: AWS Secrets Manager still holds genuinely external secrets — a t
 key. Those get a resource policy granting only the app's task role, and a KMS key policy that
 **explicitly denies the platform role**, so we cannot self-serve even with admin.
 
-### Two keys, still
+### We verify. We do not grant.
 
-Declaring a dataset is not access. The tenant declares it in `app.yaml`; the **data owner**
-grants it in Unity Catalog. Both, or the read fails — in CI (we check UC), and again at query
-time (UC refuses). The platform team cannot supply the second key. We don't own the data.
+Declaring a dataset is not access, and the platform cannot supply it — we do not own the data.
+The **data owner** grants it, in their own system, to the app's service identity.
+
+What the platform does instead is **check**: `insights doctor` and CI read the data platform's
+grant state and refuse early, naming the identity that lacks access and the group to ask. That
+turns a 06:00 `PERMISSION_DENIED` into a failure at someone's desk before they ship.
+
+There is deliberately no `insights access approve`. A command that looked like we could grant
+would misrepresent where authority actually lives.
 
 ---
 
@@ -579,7 +585,7 @@ flowchart TB
   C1 -->|yes| C2{"granted to this service principal in UC?"}
   C2 -->|no| X
   C2 -->|yes| TOK["obtain a short-lived Databricks token<br/><i>mechanism depends on the runtime - see below</i>"]
-  TOK --> UC["Unity Catalog sees svc:comp-report<br/>applies ITS grants and column masks"]
+  TOK --> UC["Unity Catalog sees sp-comp-report<br/>applies ITS grants and column masks"]
   UC --> A["audit: app · dataset · rows · run_id"]
   A --> D(["token discarded"])
 ```
@@ -609,7 +615,7 @@ is a property of where it runs, and this is the detail that is easy to get wrong
 | Property | How it is achieved | What breaks without it |
 |---|---|---|
 | **One identity per app** | A Databricks service principal per app, never per team | Blast radius becomes the union of every dataset any app on the team can read |
-| **Two keys, still** | The app declares the dataset; the **data owner** grants it to that SP in Unity Catalog | The platform team could grant itself data access |
+| **Granted by the owner, not by us** | The data owner grants the SP in their own system; the platform only verifies | The platform team could grant itself data access |
 | **Short-lived** | ~1h tokens. The federation trust itself never expires, so there is no rotation task to forget | A leaked long-lived token is valid until someone notices |
 | **Attributable** | UC's audit records the SP; our correlation record ties it to the `run_id` | "Something read compensation at 06:00" instead of "this job, this run" |
 | **Never impersonates a person** | A job acts as itself | An unattended run attributed to a human is a lie in the audit trail |

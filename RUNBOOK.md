@@ -43,19 +43,26 @@ The last one is the only alarm that is about the platform rather than an app.
 
 ### "We need access to a dataset"
 
-You cannot grant it. Route them to the **dataset owner** — that separation is the control.
+You cannot grant it, and there is no command that pretends otherwise. Route them to the
+**data owner**, and give them the exact request to send:
 
 ```bash
-# the requesting team runs:
-insights access request --dataset hr.compensation --reason "quarterly equity review"
-
-# the DATA OWNER runs (never us):
-insights access approve --dataset hr.compensation --app comp-report --approver vidya@corp.example
+# the requesting team runs this; it prints who to ask and what to ask for
+uv run insights access --reason "quarterly equity review"
 ```
 
-If someone pushes back that this is slow, the answer is that it is *meant* to be slow in
-proportion to sensitivity. Standard datasets need no grant at all — declaring them in `app.yaml`
-is enough. Only `restricted` needs a second key.
+The owner grants it **in the data platform** — a Unity Catalog grant, a role, whatever that
+source uses. Nothing is recorded here; `insights doctor` reads their state and goes green.
+
+Two cases, and they are different:
+
+* **Interactive apps** — nothing to do. The signed-in user's identity reaches the data platform,
+  so it applies their grants. If they can read it in a notebook, they can read it in the app.
+* **Scheduled jobs** — no user to inherit from, so the job acts as `sp-<app>`. Someone must
+  grant *that identity*. This is the case people forget until 06:00.
+
+If someone argues this is slow: it is meant to be proportional to sensitivity. Standard datasets
+need no grant at all.
 
 ### "We need a dataset that doesn't exist yet"
 
@@ -228,12 +235,35 @@ everyone at once, which is the cost of the thin-caller pattern.
 
 ### An app is down
 
-Almost always the app, not the platform. Check its logs, then `/healthz` — which resolves every
-dataset the app declared and checks its credential arrived, so it distinguishes "the app is
-broken" from "the app cannot reach its data".
+Almost always the app, not the platform. Two different questions, two different logs:
+
+```bash
+insights logs --app headcount-dashboard --startup   # did it boot? tracebacks live here
+insights logs --app headcount-dashboard             # it booted - what did it do?
+```
+
+`--startup` is the process log: uvicorn's output and any import error or traceback. Without it
+an app that dies on import leaves nothing in telemetry, because it never got far enough to
+emit any — so the structured view is empty and looks like "no traffic" rather than "crashed".
+
+Then `/healthz`, which resolves every dataset the app declared and checks its credential
+arrived, so it distinguishes "the app is broken" from "the app cannot reach its data".
 
 Platform-wide symptoms: every app failing at once, or the edge not responding. Check the edge
 first — nothing works without it.
+
+### Reading the audit stream
+
+```bash
+insights logs --stream audit                        # every read of a governed dataset
+insights logs --stream audit --event dataset_read --json | jq 'select(.masked_fields > 0)'
+```
+
+Each record carries caller, dataset, classification, owner, row count and masked-field count —
+and nothing else. There is no payload in it by construction, so this stream can be read by
+anyone operating the platform without that being access to tenant *data*. That distinction is
+the whole of [ADR-003](docs/adr/0003-operator-access-and-tenant-data.md): we see **that** a
+read happened, never **what** was read.
 
 ### "App queried data it never audited"
 

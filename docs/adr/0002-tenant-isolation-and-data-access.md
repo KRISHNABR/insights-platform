@@ -132,11 +132,46 @@ as a third-party API key. Those carry a resource policy granting only the app's 
 a KMS key policy that **explicitly denies the platform role**, so we cannot self-serve even
 holding admin.
 
-### 4. Two keys for sensitive data
+### 4. The platform verifies access. It never grants it.
 
-The tenant declares the dataset in its repo (intent). The **data owner** grants it in Unity
-Catalog (approval). Neither alone is sufficient: declaring a dataset you have not been granted
-fails in CI, where we check UC, and again at query time, where UC refuses.
+An earlier version of this ADR had "two keys": the tenant declared a dataset **and** the
+platform recorded an owner's approval. That was over-reach, and it duplicated something the
+organisation already does. Nothing in the brief asks the platform to run an access-approval
+workflow for tenants.
+
+**Teams already have data access.** The correction:
+
+| Question | Who decides | Where |
+|---|---|---|
+| May *this person* read it? | the data owner | their own system — a UC grant, a role, an API key |
+| May *this job* read it? | the data owner | the same, granted to the app's **service identity** |
+| **Is this job actually that identity?** | **the platform** | **only we can answer this** |
+| Did it happen, and who saw what? | the platform | the audit record |
+
+So the platform's contribution to unattended work is **identity and evidence, not approval**:
+
+* **One service identity per app, derived from the registered app name.** There is no manifest
+  field for it, and the loader rejects unknown keys, so there is nowhere to declare one. This
+  matters because access is granted *to an identity* — if a team could name their own, they
+  could claim another app's and inherit its access.
+* **Bound at deploy from the registry**, injected at runtime. The app cannot choose.
+* **Verified, not approved.** `insights doctor` and CI read the data platform's grant state and
+  fail early with *"ask MG-PEOPLE-ANALYTICS to grant sp-comp-report"*, instead of the job failing
+  at 06:00 with `PERMISSION_DENIED`. There is deliberately **no `insights access approve`** — a
+  command that looked like we could grant would misrepresent where authority lives.
+
+**What this deleted, and why it is genuinely simpler.** The previous design needed
+"roles-from-grant" so a team could not unmask salaries by editing `access.roles` in their own
+repo. That risk is now **gone rather than defended**: the manifest has no power over data access
+at all, so there is nothing to defend against. Simpler *and* equally safe.
+
+**What the declaration still earns**, now that it is not a request:
+
+* a scheduled job has no user to inherit from, so something must state what it reads;
+* it scopes the **app**, not the person — without it, any app you open could use whatever
+  authority *you* happen to have, which is the confused-deputy problem;
+* it drives `/healthz`, the secret and IAM scoping at deploy, and tells a data owner who their
+  consumers are.
 
 ### 5. There is no data discovery, and that is deliberate
 
