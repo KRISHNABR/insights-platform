@@ -57,6 +57,14 @@ jobs:
           uv run --no-project --with pytest --with pyyaml --with fastapi --with packaging \
             python -m pytest -q 2>&1 | tee "$RUNNER_TEMP/tests.txt"
 
+      - name: Platform tests
+        working-directory: insights-hub/insights-platform
+        run: |
+          # The scheduler's run state. These fail if it ever goes back to being an
+          # in-memory dict, which made `concurrency: forbid` and the fire-once-per-
+          # minute dedupe true only within one process lifetime.
+          uv run --no-project --with pytest python -m pytest tests/ -q
+
       # ---- 2 · the manifest gates, on both example apps ----------------------
       - name: insights doctor
         working-directory: insights-hub

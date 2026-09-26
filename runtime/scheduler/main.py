@@ -23,6 +23,11 @@ import sys
 import time
 import uuid
 from datetime import datetime, timezone
+
+# This module is run as a script (`python runtime/scheduler/main.py`), so its own
+# directory is sys.path[0] and a flat import is the honest one. Spelled out because
+# a bare `from state import` otherwise looks like it depends on the caller's cwd.
+from state import RunState
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -76,13 +81,13 @@ def due(schedule: str, at: datetime) -> bool:
     )
 
 
-def run(name: str, entry: dict) -> int:
+def run(name: str, entry: dict, run_id: str | None = None) -> int:
     """Run one job as a child process.
 
     A separate process on purpose: a job that leaks memory, wedges, or exits hard takes
     nothing else with it, and SIGTERM on shutdown reaches the SDK's drain handler.
     """
-    run_id = f"run-{uuid.uuid4().hex[:10]}"
+    run_id = run_id or f"run-{uuid.uuid4().hex[:10]}"
     # The registry may store an absolute path (written by `insights up`) or one
     # relative to the platform repo (written by CI). Resolve against the platform
     # root rather than the current directory, or the scheduler only works when it
@@ -133,28 +138,50 @@ def main() -> int:
     jobs = {n: e for n, e in registry.items() if e.get("kind") == "job"}
     print(f"[scheduler] {len(jobs)} job(s): {', '.join(jobs) or '-'}")
 
-    # The tick is 30s and `due()` matches to the minute, so without this a job fires
-    # TWICE every time - once at :05 and again at :35. Remembering the last minute we
-    # fired each job is the whole fix. (On Kubernetes this component becomes a
-    # CronJob and the problem stops existing; see ADR-005.)
-    last_fired: dict[str, str] = {}
+    # Run state lives in SQLite, not in a dict on this process.
+    #
+    # The tick is 30s and `due()` matches to the minute, so without dedupe a job fires
+    # TWICE every time - once at :05 and again at :35. That used to be an in-memory
+    # dict, which fixed it only within one process lifetime: restart inside the same
+    # minute and the job fired twice anyway. It is now a primary-key constraint, so
+    # the dedupe survives a restart and two schedulers racing cannot both win.
+    # (On Kubernetes this component becomes a CronJob; see ADR-005.)
+    state = RunState(PLATFORM / "runtime" / "state" / "scheduler.db")
+    reaped = state.reap_abandoned()
+    if reaped:
+        # Any run still marked in-flight belongs to a scheduler that is gone, and its
+        # child died with it. Left alone, one crash blocks that job forever under
+        # `concurrency: forbid` - a liveness bug wearing a safety feature's clothes.
+        print(f"[scheduler] reaped {reaped} abandoned run(s) from a previous process")
 
-    while True:
-        now = datetime.now(timezone.utc)
-        stamp = now.strftime("%Y-%m-%dT%H:%M")
-        for name, entry in jobs.items():
-            if args.all:
-                run(name, entry)
-                continue
-            if not entry.get("schedule") or not due(entry["schedule"], now):
-                continue
-            if last_fired.get(name) == stamp:
-                continue                      # already fired this minute
-            last_fired[name] = stamp
-            run(name, entry)
-        if args.once or args.all:
-            return 0
-        time.sleep(30)
+    try:
+        while True:
+            now = datetime.now(timezone.utc)
+            stamp = now.strftime("%Y-%m-%dT%H:%M")
+            for name, entry in jobs.items():
+                if args.all:
+                    run(name, entry)
+                    continue
+                if not entry.get("schedule") or not due(entry["schedule"], now):
+                    continue
+
+                # `concurrency: forbid` - skip this run if the last one is still going.
+                # Declared in app.yaml, and until the state store existed it was true
+                # only by accident, because run() blocks this loop.
+                if entry.get("concurrency", "forbid") == "forbid" and state.in_flight(name):
+                    print(f"[scheduler] {name} still running - skipping {stamp} (concurrency: forbid)")
+                    continue
+
+                run_id = f"run-{uuid.uuid4().hex[:10]}"
+                if not state.claim(name, stamp, run_id):
+                    continue                  # already fired this minute, here or before a restart
+                code = run(name, entry, run_id)
+                state.finish(name, stamp, code)
+            if args.once or args.all:
+                return 0
+            time.sleep(30)
+    finally:
+        state.close()
 
 
 if __name__ == "__main__":
