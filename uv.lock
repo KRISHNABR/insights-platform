@@ -139,7 +139,7 @@ requires-dist = [
 [[package]]
 name = "insights-sdk"
 version = "0.1.0"
-source = { git = "https://github.com/KRISHNABR/insights-sdk.git?tag=v1#10d57672f3c07fadaf156b725f33654a893488c0" }
+source = { git = "https://github.com/KRISHNABR/insights-sdk.git?tag=v1#1be1f9e8c3a2ae377069723d8baad9c8813f84ff" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
