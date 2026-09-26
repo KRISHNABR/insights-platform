@@ -94,9 +94,9 @@ jobs:
       - name: A tenant Dockerfile that breaks the rules is refused
         working-directory: insights-hub
         run: |
-          # ADR-004 handed the image to tenants, which turned three constructed
-          # properties into checks. A check that cannot fail is worse than no check,
-          # so prove each one fails.
+          # ADR-004 handed the image to tenants, so two properties that used to be
+          # CONSTRUCTED are now CHECKED. A check that cannot fail is worse than no
+          # check, so prove each one fails.
           cp insights-comp-report/Dockerfile "$RUNNER_TEMP/Dockerfile.orig"
           fails () {   # label, sed script
             sed -i "$2" insights-comp-report/Dockerfile
@@ -107,27 +107,41 @@ jobs:
             echo "refused: $1"
             cp "$RUNNER_TEMP/Dockerfile.orig" insights-comp-report/Dockerfile
           }
-          fails "a base from Docker Hub"  's|^FROM insights-hub/python-data:0.1|FROM python:3.12-slim|'
-          fails "an unpinned :latest base" 's|^FROM insights-hub/python-data:0.1|FROM insights-hub/python-data:latest|'
-          fails "a stale base version"     's|^FROM insights-hub/python-data:0.1|FROM insights-hub/python-data:0.0|'
-          fails "a final USER of root"     '$a\USER root'
+          grep -q '^FROM python:3.12-slim' insights-comp-report/Dockerfile \
+            || { echo "::error::the base is not what this step assumes"; exit 1; }
+
+          fails "an unpinned :latest base"  's|^FROM python:3.12-slim|FROM python:latest|'
+          fails "an untagged base"          's|^FROM python:3.12-slim|FROM python|'
+          fails "a final USER of root"      '$a\USER root'
           cp "$RUNNER_TEMP/Dockerfile.orig" insights-comp-report/Dockerfile
 
-      - name: A manifest declaring its own classification is rejected
+      - name: A manifest a tenant must not write is rejected
         working-directory: insights-hub/insights-headcount-dashboard
         run: |
           cp app.yaml "$RUNNER_TEMP/app.yaml.bak"
-          sed -i 's/^  - dataset: hr.headcount$/  - dataset: hr.headcount\n    classification: internal/' app.yaml
-          grep -q 'classification: internal' app.yaml || { echo "::error::could not inject"; exit 1; }
-          if uv run insights doctor > "$RUNNER_TEMP/reject.txt" 2>&1; then
-            echo "::error::a manifest declaring classification was ACCEPTED"
-            cat "$RUNNER_TEMP/reject.txt"
-            cp "$RUNNER_TEMP/app.yaml.bak" app.yaml
-            exit 1
-          fi
-          echo "correctly rejected:"
-          grep -i classification "$RUNNER_TEMP/reject.txt" || true
-          cp "$RUNNER_TEMP/app.yaml.bak" app.yaml
+          restore() { cp "$RUNNER_TEMP/app.yaml.bak" app.yaml; }
+
+          refuse () {   # label, sed script
+            restore
+            sed -i "$2" app.yaml
+            if uv run insights doctor > "$RUNNER_TEMP/reject.txt" 2>&1; then
+              echo "::error::ACCEPTED $1"; cat "$RUNNER_TEMP/reject.txt"; restore; exit 1
+            fi
+            echo "refused: $1"
+          }
+
+          # A credential in a file that lives in git forever.
+          refuse "a password in a connection" \
+            's|^    engine: rest$|    engine: rest\n    password: hunter2|'
+          # Sensitivity is the data platform's to state, not a tenant's.
+          refuse "a tenant-declared classification" \
+            's|^    engine: rest$|    engine: rest\n    classification: internal|'
+          # Fields removed from the schema are refused, never silently ignored.
+          refuse "the removed runtime.sdk field" \
+            's|^runtime:$|runtime:\n  sdk: ">=0.1,<1"|'
+          refuse "the removed environments block" \
+            '$a\environments:\n  prod: {approvers: owners}'
+          restore
 
       # ---- 3b · a tenant repo must resolve ON ITS OWN ------------------------
       #
@@ -160,54 +174,80 @@ jobs:
         working-directory: insights-hub/insights-comp-report
         run: |
           uv run insights run 2>&1 | tee "$RUNNER_TEMP/job.jsonl"
-          grep -q '"via_grant": true'         "$RUNNER_TEMP/job.jsonl"   # the owner's grant applied
-          grep -q '"event": "output_written"' "$RUNNER_TEMP/job.jsonl"   # a declared output landed
-          grep -q '"event": "job_complete"'   "$RUNNER_TEMP/job.jsonl"
+          grep -q '"event": "connection_opened"' "$RUNNER_TEMP/job.jsonl"
+          grep -q '"event": "query_executed"'    "$RUNNER_TEMP/job.jsonl"
+          grep -q '"event": "output_written"'    "$RUNNER_TEMP/job.jsonl"
+          grep -q '"event": "job_complete"'      "$RUNNER_TEMP/job.jsonl"
+
+          # What a query record must NOT contain. The platform ships connectors and
+          # never sees a row, so its own telemetry must not carry one either.
+          if grep '"event": "query_executed"' "$RUNNER_TEMP/job.jsonl" | grep -qiE 'SELECT|base_salary'; then
+            echo "::error::a query record leaked SQL or a column name"; exit 1
+          fi
 
       # ---- 5 · the web path, through the edge --------------------------------
-      - name: Boot the platform and exercise the web path
-        working-directory: insights-hub/insights-platform
+      - name: Boot the platform, serve an app, exercise the web path
+        working-directory: insights-hub
         run: |
-          uv run insights up --port 9000 > "$RUNNER_TEMP/up.log" 2>&1 &
-          for _ in $(seq 1 60); do
-            curl -sf http://localhost:9000/ >/dev/null && break
-            sleep 1
-          done
-          curl -sf http://localhost:9000/ >/dev/null || { echo "::error::edge never came up"; cat "$RUNNER_TEMP/up.log"; exit 1; }
+          # `up` starts the PLATFORM only. Apps are independent: each runs in its own
+          # repo via `insights serve` and registers itself live. This step proves both
+          # halves, in the order a person would do them.
+          (cd insights-platform && uv run insights up --port 9000 > "$RUNNER_TEMP/up.log" 2>&1 &)
+          for _ in $(seq 1 60); do curl -sf http://localhost:9000/ >/dev/null && break; sleep 1; done
+          curl -sf http://localhost:9000/ >/dev/null \
+            || { echo "::error::edge never came up"; cat "$RUNNER_TEMP/up.log"; exit 1; }
 
-          B=http://localhost:9000/a/headcount-dashboard
+          # The console is the one app the platform runs, and it must work with zero
+          # tenant apps present.
+          code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:9000/apps/console/?as=suraj@corp.example")
+          [ "$code" = 303 ] || [ "$code" = 200 ] \
+            || { echo "::error::console returned $code with no apps running"; exit 1; }
+
+          (cd insights-headcount-dashboard && uv run insights serve --edge 9000 --port 9101 \
+             > "$RUNNER_TEMP/serve.log" 2>&1 &)
+          for _ in $(seq 1 60); do curl -sf http://localhost:9101/healthz >/dev/null && break; sleep 1; done
+          curl -sf http://localhost:9101/healthz >/dev/null \
+            || { echo "::error::app never came up"; cat "$RUNNER_TEMP/serve.log"; exit 1; }
+
+          B=http://localhost:9000/apps/headcount-dashboard
           J="$RUNNER_TEMP/jar.txt"
           S="$RUNNER_TEMP/steps.md"; : > "$S"
           ok() { echo "| $1 | ✅ $2 |" >> "$S"; echo "PASS: $1"; }
-          no() { echo "::error::$1"; cat "$RUNNER_TEMP/up.log"; exit 1; }
+          no() { echo "::error::$1"; cat "$RUNNER_TEMP/up.log" "$RUNNER_TEMP/serve.log"; exit 1; }
 
+          # An app registered by `serve` is reachable through the edge with NO restart.
           code=$(curl -s -L -c "$J" -b "$J" "$B/?as=krishna@corp.example" -o /dev/null -w '%{http_code}')
-          [ "$code" = 200 ] && ok "Signs in and serves the app" "$code" || no "sign-in returned $code"
+          [ "$code" = 200 ] && ok "An app registers itself live" "$code" || no "sign-in returned $code"
 
           curl -s -b "$J" "$B/api/me" | grep -q '"trusted":true' \
             && ok "Identity is established by the edge" "trusted" || no "identity not trusted"
 
-          curl -s -b "$J" -H 'X-Auth-User: ceo@corp.example' -H 'X-Auth-Groups: comp-analyst' \
+          curl -s -b "$J" -H 'X-Auth-User: ceo@corp.example' -H 'X-Auth-Groups: admin' \
                "$B/api/me" | grep -q 'krishna@corp.example' \
             && ok "Forged identity headers are stripped" "still krishna" || no "forged headers were honoured"
 
           curl -s -b "$J" "$B/api/headcount?month=2026-09" | grep -q 'Engineering' \
-            && ok "Reads the warehouse through the broker" "rows" || no "warehouse read failed"
+            && ok "Reads its warehouse through a connector" "rows" || no "warehouse read failed"
 
           curl -s -b "$J" "$B/api/team?dept=Engineering" | grep -q 'kishore@corp.example' \
-            && ok "Reads the internal REST API" "rows" || no "REST read failed"
+            && ok "Reads an internal REST API" "rows" || no "REST read failed"
 
           curl -s -b "$J" "$B/healthz" | grep -q '"status":"ok"' \
-            && ok "Health resolves every declared dataset" "ok" || no "health check failed"
+            && ok "Health opens every declared connection" "ok" || no "health check failed"
 
           curl -s -L -c "$RUNNER_TEMP/j2" -b "$RUNNER_TEMP/j2" "$B/?as=vidya@corp.example" -o /dev/null
           curl -s -b "$RUNNER_TEMP/j2" "$B/api/headcount" | grep -q 'not a member' \
-            && ok "A trusted caller without the role is refused" "403" || no "wrong role was allowed"
+            && ok "A user outside the app is refused" "403" || no "a user outside the app was allowed"
+
+          # Running outside the edge is not "an app with no user" - it is an app where
+          # every check returns no, including the data path.
+          curl -s http://localhost:9101/api/me | grep -q '"trusted":false' \
+            && ok "Bypassing the edge yields nothing" "anonymous" || no "direct access was trusted"
 
       # ---- 6 · the evidence a reviewer would be handed -----------------------
       - name: Compliance report
         working-directory: insights-hub/insights-platform
-        run: uv run insights compliance-report --dataset hr.compensation 2>&1 | tee "$RUNNER_TEMP/compliance.txt"
+        run: uv run insights compliance-report 2>&1 | tee "$RUNNER_TEMP/compliance.txt"
 
       - name: Summary
         if: always()
