@@ -149,7 +149,15 @@ Adding an engine is a platform change of about ten minutes:
     secret: hr-warehouse-token
 ```
 
-resolves to `insights/<app>/hr-warehouse-token` in the secret store.
+**Locally** it is read from `.env` in your own repo:
+
+```
+hr-warehouse-token=any-local-value
+```
+
+`.env` is gitignored and CI refuses a committed one. **In dev and prod** `.env` is not
+read at all — the platform injects the value from `insights/<app>/hr-warehouse-token`
+using your app's identity.
 
 | | |
 |---|---|

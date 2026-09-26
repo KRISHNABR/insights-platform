@@ -67,6 +67,32 @@ jobs:
             python -m pytest tests/ -q
 
       # ---- 2 · the manifest gates, on both example apps ----------------------
+      - name: Local secrets come from each app's own .env
+        working-directory: insights-hub
+        run: |
+          # .env is gitignored, so a fresh clone has none - which is the point: a
+          # secret is the team's to set. CI does what a developer does.
+          for app in insights-headcount-dashboard insights-comp-report; do
+            [ -f "$app/.env.example" ] || { echo "::error::$app ships no .env.example"; exit 1; }
+            cp "$app/.env.example" "$app/.env"
+            sed -i 's/=$/=local-fake-value/' "$app/.env"
+            git -C "$app" check-ignore -q .env \
+              || { echo "::error::$app does not gitignore .env"; exit 1; }
+          done
+          echo "local secrets set from .env.example, and .env is ignored in both repos"
+
+      - name: A committed .env is refused
+        working-directory: insights-hub/insights-comp-report
+        run: |
+          # The one that matters: a credential in git is in the history forever.
+          git add -f .env
+          if INSIGHTS_REGISTRY_DIR=../insights-platform/control/registry \
+               python ../insights-platform/control/cli/gates.py --app comp-report --manifest app.yaml; then
+            echo "::error::the gate ACCEPTED a committed .env"; git reset -q .env; exit 1
+          fi
+          git reset -q .env
+          echo "refused: a committed .env"
+
       - name: insights doctor
         working-directory: insights-hub
         run: |

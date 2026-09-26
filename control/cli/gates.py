@@ -132,6 +132,48 @@ def main() -> int:
                             f"See ADR-001."
                         )
 
+    # 4. no secrets committed
+    #
+    # This check was silently lost in a refactor and restored after `git grep` found
+    # SECRET_PATTERNS with no readers. Worth noting how that happened: deleting a
+    # BLOCK is invisible to a test suite that never asserted the block ran. The
+    # negative CI step below now covers it.
+    #
+    # 4a. a tracked .env specifically. Local secret values live there and the
+    #     generator gitignores it; a tracked one means a credential is in the history,
+    #     and "removed in the next commit" is not a remediation.
+    import subprocess as _sp
+
+    if _sp.run(["git", "ls-files", "--error-unmatch", ".env"],
+               capture_output=True, text=True).returncode == 0:
+        fail(
+            ".env is committed. It holds local secret values and must never be in git "
+            "- the generator gitignores it. Remove it from the index, rotate whatever "
+            "was in it, and commit .env.example instead."
+        )
+
+    # 4b. anything that looks like a credential, anywhere the team wrote.
+    #     Scans what the TEAM wrote, not what their tools downloaded: site-packages
+    #     ships test fixtures containing literal private keys, so scanning .venv
+    #     would fail a clean repo because of a dependency's test data.
+    for path in Path(".").rglob("*"):
+        if any(part in SCAN_SKIP_DIRS for part in path.parts):
+            continue
+        if path.suffix in SCAN_SKIP_SUFFIXES:
+            continue
+        try:
+            if not path.is_file():
+                continue
+            text = path.read_text(errors="ignore")
+        except OSError:
+            # Unreadable is not a finding. `is_file()` is INSIDE the try because it
+            # stats, and having it outside meant one unreadable file crashed the gate.
+            continue
+        for pattern in SECRET_PATTERNS:
+            if pattern.search(text):
+                fail(f"possible secret in {path}")
+                break
+
     # 5. the tenant's Dockerfile, checked rather than owned
     #
     # This is the deliberate trade in ADR-004. An earlier design refused a tenant
