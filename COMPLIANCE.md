@@ -67,7 +67,7 @@ and the audit sink, so it reports the system's actual state rather than its inte
 ## What we did not build
 
 Named here rather than left for you to find. Each has a written trigger in
-[ADR-005](docs/adr/ADR-005-deliberate-omissions.md).
+[ADR-005](docs/adr/0005-deliberate-omissions-and-triggers.md).
 
 | Not built | Why not, honestly | What would change it |
 |---|---|---|

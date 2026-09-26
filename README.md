@@ -15,7 +15,7 @@ and everything is indexed from here.
 |---|---|
 | **2 minutes** | this page, down to *"The shape of it"* |
 | **10 minutes** | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — the whole system in one document |
-| **30 minutes** | [ADR-002](docs/adr/ADR-002-shared-data-and-isolation.md) and [ADR-003](docs/adr/ADR-003-operator-access.md) — the two decisions most worth arguing with |
+| **30 minutes** | [ADR-002](docs/adr/0002-tenant-isolation-and-data-access.md) and [ADR-003](docs/adr/0003-operator-access-and-tenant-data.md) — the two decisions most worth arguing with |
 | **an hour** | all five [ADRs](docs/adr/), then [`ONBOARDING.md`](ONBOARDING.md) to see what it feels like to a tenant |
 
 **If you only read one thing:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
@@ -153,7 +153,7 @@ minors flow automatically. The upgrade story with twelve dependants rests on
 **deprecation telemetry**: a deprecated call emits an event naming the app, version and
 symbol, so migration is a list of four teams rather than a broadcast email. Majors are
 cut when that list empties, not on a date.
-→ [ADR-001](docs/adr/ADR-001-reuse-and-upgrade.md)
+→ [ADR-001](docs/adr/0001-platform-shape-and-reuse-strategy.md)
 
 **Isolation, and shared data connections** — the platform **brokers reads; it never hands
 out a connection.** Sharing a connection means sharing a credential, and then nothing
@@ -162,7 +162,7 @@ platform resolves connection, engine, location, credential and classification. I
 is soft by default with a restricted tier triggered by the **data's classification, not
 the tenant's identity** — and classification lives in the platform registry, so no team
 can downgrade its own.
-→ [ADR-002](docs/adr/ADR-002-shared-data-and-isolation.md)
+→ [ADR-002](docs/adr/0002-tenant-isolation-and-data-access.md)
 
 **Operator access** — telemetry structurally cannot carry payloads: the logger *raises*
 at the emit point rather than scrubbing at the sink, because scrubbing fails open. The
@@ -170,18 +170,18 @@ platform team has no standing access to tenant rows; break-glass is time-boxed,
 approved by the **dataset owner** rather than by us, audited, and the tenant is notified.
 We also write down the hole we can't close: the broker is in-process, so the credential
 sits in the tenant's container.
-→ [ADR-003](docs/adr/ADR-003-operator-access.md)
+→ [ADR-003](docs/adr/0003-operator-access-and-tenant-data.md)
 
 **Enforcement** — each rule goes to the earliest layer that makes it impossible to get
 wrong. The diagnostic: *what does the day-one guide have to warn people about?* Every
 warning is a control sitting one layer too late.
-→ [ADR-004](docs/adr/ADR-004-enforcement-placement.md)
+→ [ADR-004](docs/adr/0004-enforcement-and-platform-rules.md)
 
 **Deliberate omissions** — eleven of them, each with the trigger that reverses it. No
 portal, no policy engine, no per-tenant infrastructure, no multi-environment promotion,
 **no data discovery**, no per-user credential passthrough, no federation to an
 enterprise data catalog.
-→ [ADR-005](docs/adr/ADR-005-deliberate-omissions.md)
+→ [ADR-005](docs/adr/0005-deliberate-omissions-and-triggers.md)
 
 ---
 

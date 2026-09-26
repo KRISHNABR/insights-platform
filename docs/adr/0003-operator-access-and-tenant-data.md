@@ -1,4 +1,4 @@
-# ADR-003 — Operator access: zero standing access to tenant data, redaction at the emit point
+# ADR-003 — Operator access to tenant data: none standing, and redaction that raises at the emit point
 
 **Status:** Accepted · **Date:** 2026-09-26
 **Drivers from the brief:** *"their compliance partner will review your design before they

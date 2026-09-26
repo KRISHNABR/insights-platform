@@ -1,4 +1,4 @@
-# ADR-001 — Reuse mechanism: a versioned SDK in its own repo, with generated scaffolds
+# ADR-001 — Platform shape and reuse strategy: a versioned SDK, not a monorepo or a runtime service
 
 **Status:** Accepted · **Date:** 2026-09-26
 **Drivers from the brief:** *"the platform team is 2–3 engineers, who also maintain, upgrade, and
@@ -52,6 +52,47 @@ The upgrade story rests on seven mechanisms:
 
 Mechanism 4 is the one that makes the rest safe. Without usage data, removing a deprecated API is
 a guess; with it, it is a decision.
+
+### How apps ship and run — the same decision, one layer down
+
+The shape of the substrate is only half the question. The other half is how code gets onto it,
+and it is answered the same way: **the platform owns the road, the tenant owns the vehicle.**
+
+**Shipping.** A tenant's CI file is four lines and calls a central reusable workflow:
+
+```yaml
+jobs:
+  deploy:
+    uses: insights-hub/insights-platform/.github/workflows/deploy.yml@v1
+    with: {app: headcount-dashboard}
+```
+
+Everything that happens on a push — manifest validation, entitlement checks against the registry,
+the SDK support-window check, secret scanning, build, registration, rollout — lives on the
+platform side. Improving any of it is one commit rather than twelve pull requests, which is the
+same argument as the SDK and the reason both answers are in one ADR.
+
+**Building.** Every app builds `FROM insights-hub/base:0.1`, which carries the runtime, the SDK,
+the non-root user, the entrypoint and the health contract. A platform CVE is one base-image
+rebuild and a redeploy. CI rejects an app whose `FROM` is `:latest`, because a floating base tag
+quietly destroys that property.
+
+**Running.** Two archetypes, one platform:
+
+| | `kind: web` | `kind: job` |
+|---|---|---|
+| Started by | the runtime, on a port | the platform scheduler, from the registry and a cron line |
+| Identity | per request, from the edge | per run — a service caller the scheduler constructs |
+| Inherits | routing, sign-in, request ids, access logs, a health check that resolves every declared dataset | a run id, start/finish telemetry, SIGTERM draining, an exit-code contract |
+
+`kind` selects a branch in a single `entrypoint.sh`, so the archetypes cannot drift apart, and a
+team needing both writes two manifests rather than learning two platforms. What makes `kind` real
+rather than decorative: a job **must** declare a schedule and a web app **must not** — the
+manifest loader rejects either mistake. **Jobs are never deployed as services**; the registry
+records the schedule and the platform runs them.
+
+The deliberate omission here is retries, backfill and distributed locking in the scheduler. A
+fancier scheduler is a component to be paged for, and nothing yet justifies one (ADR-005).
 
 ## The tension
 
@@ -116,6 +157,29 @@ copy cannot.
 hand-rolls the same things… slow, inconsistent, and increasingly hard to govern."* It also makes
 every control in ADR-003 and ADR-004 unenforceable, because there is nothing central to enforce
 them in.
+
+### For the deployment half specifically
+
+**E. Each team owns its own pipeline, with a documented recipe.**
+Maximum tenant autonomy and zero platform maintenance — until a check has to change, at which
+point it is twelve pull requests against code the platform team does not own, and the check is
+optional in practice because nothing verifies it ran. It also removes the only place a rule can
+sit that *must never ship* (ADR-004's CI layer). Rejected for the same reason as alternative D:
+it makes controls advisory.
+
+**F. A shared composite action or shared step, rather than a reusable workflow.**
+Closer, and a reasonable halfway house. Rejected because a composite action is *invoked* by a
+tenant-owned job — so the tenant still owns the job's structure, its triggers and the order of
+steps, and can skip or reorder the platform's step. A reusable workflow owns the whole job.
+The difference only matters when someone is under deadline pressure, which is exactly when it
+matters.
+
+**G. A full internal PaaS — push a branch, we detect and run it.**
+The best tenant experience by a distance, and where this would go with more people. Rejected on
+operating cost: build detection, buildpacks, a rollout controller and the support load of an
+opaque "it didn't deploy" are a product, not a feature. The four-line caller keeps the tenant
+experience nearly as good while leaving the mechanism legible, which matters when three people
+have to debug it.
 
 ## Consequences
 

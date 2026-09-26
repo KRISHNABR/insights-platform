@@ -1,4 +1,4 @@
-# ADR-005 — What we deliberately did not build, and what would trigger building it
+# ADR-005 — Deliberate omissions, and the triggers that would reverse them
 
 **Status:** Accepted · **Date:** 2026-09-26
 **Drivers from the brief:** *"the platform team is 2–3 engineers, who also maintain, upgrade, and

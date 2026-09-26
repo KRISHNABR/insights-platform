@@ -29,7 +29,7 @@ a lot.
 
 **What we don't do.** There's no portal, no data catalog you can browse, and no staging
 environment yet. Those are decisions rather than gaps —
-[ADR-005](docs/adr/ADR-005-deliberate-omissions.md) lists all eleven of them with the
+[ADR-005](docs/adr/0005-deliberate-omissions-and-triggers.md) lists all eleven of them with the
 trigger that would change our mind. If you hit one, tell us: you're the trigger.
 
 ---
@@ -346,8 +346,8 @@ eventually have to break.
 |---|---|
 | How does this work? | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | Why does it work that way? | [`docs/adr/`](docs/adr/) — five decision records |
-| What's NOT built, and why? | [ADR-005](docs/adr/ADR-005-deliberate-omissions.md) |
-| What can the platform team see? | [ADR-003](docs/adr/ADR-003-operator-access.md) — short version: not your data |
+| What's NOT built, and why? | [ADR-005](docs/adr/0005-deliberate-omissions-and-triggers.md) |
+| What can the platform team see? | [ADR-003](docs/adr/0003-operator-access-and-tenant-data.md) — short version: not your data |
 | I have a compliance reviewer | [`COMPLIANCE.md`](COMPLIANCE.md), and `insights compliance-report` |
 
 ## When you get stuck

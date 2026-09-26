@@ -1,4 +1,4 @@
-# ADR-002 — Shared data connections: a broker, not a connection pool — and the isolation line it draws
+# ADR-002 — Tenant isolation and data access: shared connections are brokered, not handed out
 
 **Status:** Accepted · **Date:** 2026-09-26
 **Drivers from the brief:** *"access to shared data connections (e.g., a warehouse, an internal

@@ -90,11 +90,11 @@ requirement, and ADR-001 and ADR-004 together answer deployment.*
 
 | The question | ADR | The call, in one line | The tension resolved |
 |---|---|---|---|
-| **Reuse mechanism** and the upgrade story with 12 apps depending on it | [ADR-001](adr/ADR-001-reuse-and-upgrade.md) | Versioned SDK in its own repo, floor-not-pin, scaffolds **generated not cloned**; seven upgrade mechanisms with deprecation telemetry as the keystone | Tenant autonomy vs platform upgrade cost — we took the harder upgrade path to keep ownership where it belongs |
-| **Isolation** — what's shared, what isn't, and what drew the line | [ADR-002](adr/ADR-002-shared-data-and-isolation.md) | The platform **brokers reads rather than handing out connections**, so the only real boundary is the data path — and the tier follows the *data's* classification, not the tenant. Classification lives in the platform catalog, never the tenant's manifest | Operability vs assurance — "employees + recourse" licenses sharing; compensation data buys back least privilege and evidence |
-| **Operator access** — what the platform team can see and do | [ADR-003](adr/ADR-003-operator-access.md) | Telemetry **structurally cannot carry payloads** (raises at emit); zero standing access to rows; break-glass that is time-boxed, dataset-owner-approved, audited and **tenant-notified** | Same tension, with the platform team as the subject — every control makes our own job harder |
-| **Enforcement** — where the rules live and how we decided | [ADR-004](adr/ADR-004-enforcement-placement.md) | Earliest layer that makes it impossible to get wrong: generator → SDK → CI → review → docs last | Enforcement strength vs tenant freedom — no escape hatch round the broker, but platform gaps are treated as bugs |
-| **Deliberate omissions** and their triggers | [ADR-005](adr/ADR-005-deliberate-omissions.md) | Eleven things not built — portal, micro-frontend shell, policy engine, per-tenant infra, real cloud, multi-env promotion, agents, DR/SLOs, **data discovery**, **per-user passthrough / an HTTP data service**, and **federation to an enterprise data catalog** — each with a written trigger | Completeness vs honesty about who operates this |
+| **Reuse mechanism** and the upgrade story with 12 apps depending on it — and, one layer down, how apps ship and run | [ADR-001](adr/0001-platform-shape-and-reuse-strategy.md) | Versioned SDK in its own repo, floor-not-pin, scaffolds **generated not cloned**; seven upgrade mechanisms with deprecation telemetry as the keystone. Deployment answers the same way: a four-line tenant caller into one platform-owned workflow | Tenant autonomy vs platform upgrade cost — we took the harder upgrade path to keep ownership where it belongs |
+| **Isolation** — what's shared, what isn't, and what drew the line | [ADR-002](adr/0002-tenant-isolation-and-data-access.md) | The platform **brokers reads rather than handing out connections**, so the only real boundary is the data path — and the tier follows the *data's* classification, not the tenant. Classification lives in the platform catalog, never the tenant's manifest | Operability vs assurance — "employees + recourse" licenses sharing; compensation data buys back least privilege and evidence |
+| **Operator access** — what the platform team can see and do | [ADR-003](adr/0003-operator-access-and-tenant-data.md) | Telemetry **structurally cannot carry payloads** (raises at emit); zero standing access to rows; break-glass that is time-boxed, dataset-owner-approved, audited and **tenant-notified** | Same tension, with the platform team as the subject — every control makes our own job harder |
+| **Enforcement** — where the rules live and how we decided | [ADR-004](adr/0004-enforcement-and-platform-rules.md) | Earliest layer that makes it impossible to get wrong: generator → SDK → CI → review → docs last | Enforcement strength vs tenant freedom — no escape hatch round the broker, but platform gaps are treated as bugs |
+| **Deliberate omissions** and their triggers | [ADR-005](adr/0005-deliberate-omissions-and-triggers.md) | Eleven things not built — portal, micro-frontend shell, policy engine, per-tenant infra, real cloud, multi-env promotion, agents, DR/SLOs, **data discovery**, **per-user passthrough / an HTTP data service**, and **federation to an enterprise data catalog** — each with a written trigger | Completeness vs honesty about who operates this |
 
 ## The two flows worth understanding in detail
 
@@ -152,7 +152,7 @@ The registry has two levels, and the distinction carries most of the design:
 
 Steps 2, 5, 6, 8 and 9 are only enforceable because there is exactly **one** code path to data.
 That is the reason the platform brokers reads instead of handing out connections, and it is the
-single decision the rest of the design rests on ([ADR-002](adr/ADR-002-shared-data-and-isolation.md)).
+single decision the rest of the design rests on ([ADR-002](adr/0002-tenant-isolation-and-data-access.md)).
 
 ### The two archetypes, and why they are not two platforms
 
@@ -178,7 +178,10 @@ registry records the schedule and the platform runs them.
 
 The one genuinely different question is the one above: a scheduled run has no human, so its
 identity and its masking roles had to be answered separately — see
-[ADR-002 §3](adr/ADR-002-shared-data-and-isolation.md).
+[ADR-002 §3](adr/0002-tenant-isolation-and-data-access.md).
+
+*The decision behind this table, and the three deployment models rejected to reach it, are in
+[ADR-001](adr/0001-platform-shape-and-reuse-strategy.md).*
 
 ## Where the brief's four shared needs are answered
 
@@ -252,9 +255,9 @@ Two of these exist *because* the code was written rather than only designed:
 ## Reading order
 
 1. This page
-2. [ADR-002 Shared data and isolation](adr/ADR-002-shared-data-and-isolation.md) — the central tension, and the decision everything else rests on
-3. [ADR-003 Operator access](adr/ADR-003-operator-access.md) — the same tension with us as the subject
-4. [ADR-001 Reuse and upgrade](adr/ADR-001-reuse-and-upgrade.md) — the mechanism everything rests on
-5. [ADR-004 Enforcement](adr/ADR-004-enforcement-placement.md) · [ADR-005 Omissions](adr/ADR-005-deliberate-omissions.md)
+2. [ADR-002 Tenant isolation and data access](adr/0002-tenant-isolation-and-data-access.md) — the central tension, and the decision everything else rests on
+3. [ADR-003 Operator access](adr/0003-operator-access-and-tenant-data.md) — the same tension with us as the subject
+4. [ADR-001 Platform shape and reuse](adr/0001-platform-shape-and-reuse-strategy.md) — what the substrate is, and how code reaches it
+5. [ADR-004 Enforcement](adr/0004-enforcement-and-platform-rules.md) · [ADR-005 Omissions](adr/0005-deliberate-omissions-and-triggers.md)
 
 Then [`ONBOARDING.md`](../ONBOARDING.md) for what all of this looks like to team #6 on day one.

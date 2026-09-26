@@ -1,4 +1,4 @@
-# ADR-004 — Enforce each rule at the earliest layer that makes it impossible to get wrong
+# ADR-004 — Enforcement: each rule at the earliest layer that makes it impossible to get wrong
 
 **Status:** Accepted · **Date:** 2026-09-26
 **Drivers from the brief:** *"the platform team is 2–3 engineers"* · *"teams vary"* · *"every
