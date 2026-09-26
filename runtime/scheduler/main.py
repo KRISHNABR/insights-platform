@@ -83,14 +83,22 @@ def run(name: str, entry: dict) -> int:
     nothing else with it, and SIGTERM on shutdown reaches the SDK's drain handler.
     """
     run_id = f"run-{uuid.uuid4().hex[:10]}"
+    # The registry may store an absolute path (written by `insights up`) or one
+    # relative to the platform repo (written by CI). Resolve against the platform
+    # root rather than the current directory, or the scheduler only works when it
+    # happens to be launched from the right place.
+    app_dir = Path(entry["path"])
+    if not app_dir.is_absolute():
+        app_dir = (PLATFORM / app_dir).resolve()
+
     env = dict(os.environ)
     env.update(
-        INSIGHTS_APP_MANIFEST=str(Path(entry["path"]) / "app.yaml"),
+        INSIGHTS_APP_MANIFEST=str(app_dir / "app.yaml"),
         INSIGHTS_APP=name,
         INSIGHTS_RUN_ID=run_id,
     )
     print(f"[scheduler] starting {name} {run_id}", flush=True)
-    result = subprocess.run([sys.executable, "src/main.py"], cwd=entry["path"], env=env)
+    result = subprocess.run([sys.executable, "src/main.py"], cwd=app_dir, env=env)
     print(f"[scheduler] {name} {run_id} exit={result.returncode}", flush=True)
     return result.returncode
 
@@ -101,10 +109,27 @@ def main() -> int:
     parser.add_argument("--all", action="store_true", help="run every job now, ignoring schedules")
     args = parser.parse_args()
 
-    if not REGISTRY.is_file():
+    # apps.local.json (written by `insights up`) shadows apps.json (written by CI),
+    # and both may carry `_`-prefixed documentation keys. The edge and the CLI filter
+    # those; this did not, so it crashed on startup with
+    # AttributeError: 'str' object has no attribute 'get'.
+    source = next((p for p in (REGISTRY.with_name("apps.local.json"), REGISTRY) if p.is_file()), None)
+    if source is None:
         print("no apps registered - run `insights up` first")
         return 1
-    registry = json.loads(REGISTRY.read_text())
+    registry = {
+        name: entry
+        for name, entry in json.loads(source.read_text()).items()
+        if not name.startswith("_")
+    }
+
+    # Locally, seed the stub warehouse if it is missing. `insights up` and
+    # `insights run` both do this; the scheduler did not, so a reviewer following
+    # the README on a cold clone got "no such table: hr_compensation". Seeding is
+    # idempotent. In a real environment there is nothing to seed and this is a no-op.
+    database = PLATFORM / "runtime" / "fakes" / "warehouse" / "warehouse.db"
+    if os.environ.get("INSIGHTS_ENV", "local") == "local" and not database.is_file():
+        subprocess.run([sys.executable, str(database.with_name("seed.py")), str(database)], check=True)
     jobs = {n: e for n, e in registry.items() if e.get("kind") == "job"}
     print(f"[scheduler] {len(jobs)} job(s): {', '.join(jobs) or '-'}")
 

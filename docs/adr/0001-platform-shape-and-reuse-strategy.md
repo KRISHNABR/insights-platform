@@ -72,6 +72,12 @@ the SDK support-window check, secret scanning, build, registration, rollout — 
 platform side. Improving any of it is one commit rather than twelve pull requests, which is the
 same argument as the SDK and the reason both answers are in one ADR.
 
+**`@v1` is a moving major tag, and that is the same decision as floor-not-pin.** A tenant gets
+pipeline improvements without editing anything; a breaking change to the workflow *interface* —
+a renamed input, a new required secret — means cutting `v2`, not moving `v1`. Pinning a commit
+SHA in twelve tenant repos would make improving the pipeline a twelve-PR job, which is exactly
+what this whole ADR exists to avoid.
+
 **Building.** A tenant has no Dockerfile. They declare `runtime.base` — one of a small published
 family — and the platform renders the image. The base carries the runtime, the SDK, the non-root
 user, the entrypoint and the health contract, so a platform CVE is one rebuild and a redeploy
