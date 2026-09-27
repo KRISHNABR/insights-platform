@@ -336,7 +336,7 @@ Every claim above maps to code and a test. The full table is in
 [ARCHITECTURE § Evidence map](ARCHITECTURE.md#evidence-map--every-claim-and-where-it-is-enforced).
 
 ```bash
-# 60 test cases, each turning an ADR claim into evidence
+# 93 test cases, each turning an ADR claim into evidence
 cd insights-sdk && uv run --with pytest --with pyyaml --with fastapi python -m pytest -q
 ```
 

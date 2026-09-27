@@ -82,7 +82,8 @@ insights-platform/
 │   ├── state/             scheduler run state (gitignored)
 │   └── outputs/           what jobs produce (gitignored)
 │
-├── tests/                 the scheduler's run state, and the console
+├── tests/                 the scheduler's run state, the console, and that every
+│                          test the docs cite actually exists
 ├── infra/                 what the AWS layer would be. Stubs, and honest about it
 ├── .devcontainer/         so Codespaces gives a reviewer a working env in a browser
 └── .github/workflows/
@@ -123,7 +124,7 @@ insights-sdk/
 │   └── cli/
 │       ├── main.py        the `insights` command
 │       └── scaffold.py    every file `insights new-app` generates
-└── tests/                 89 tests
+└── tests/                 93 tests
 ```
 
 ### What a tenant repo looks like

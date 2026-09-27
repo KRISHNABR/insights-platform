@@ -77,14 +77,14 @@ uv run insights compliance-report
 
 Reports which apps hold which connections, whose credential each uses, every
 connection failure by kind, and the redaction assertion status. Everything in it is
-read from the registry, the manifests and the audit sink — **nothing is asserted by
+read from the deployment registry, the manifests and the telemetry sink — **nothing is asserted by
 the command itself**, because a report the platform team writes by hand is a claim.
 
 ```bash
 cd insights-sdk && uv run --no-project --with pytest ... python -m pytest -q
 ```
 
-88 tests. The ones cited above are named so a reviewer can run exactly the one that
+93 tests. The ones cited above are named so a reviewer can run exactly the one that
 backs a given row.
 
 ---
