@@ -67,8 +67,8 @@ jobs:
     with: {app: headcount-dashboard}
 ```
 
-Everything that happens on a push — manifest validation, entitlement checks against the registry,
-the SDK support-window check, secret scanning, build, registration, rollout — lives on the
+Everything that happens on a push — manifest validation, the connection-engine check, the
+SDK support-window check, secret scanning, build, registration, rollout — lives on the
 platform side. Improving any of it is one commit rather than twelve pull requests, which is the
 same argument as the SDK and the reason both answers are in one ADR.
 

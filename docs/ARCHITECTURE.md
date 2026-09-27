@@ -257,9 +257,9 @@ The three tiers **nest** — an owner satisfies `require_role("reader")` — bec
 alternative is listing owners in three places, and forgetting once is a lockout that
 looks like a platform bug.
 
-Locally the `?as=` stub stands in for the IdP redirect; in production it is ALB native
-OIDC. The app only ever sees `X-Auth-*` from a trusted edge, which is why the
-substitution costs nothing in `src/`.
+Locally the `?as=` stub stands in for the IdP redirect; in production the corporate SSO
+session is validated at the front door and turned into the same headers. The app only ever
+sees `X-Auth-*` from a trusted edge, which is why the substitution costs nothing in `src/`.
 
 ---
 
@@ -473,7 +473,7 @@ flowchart LR
 
   subgraph P["PRODUCTION"]
     direction TB
-    P1["ALB — TLS, native OIDC"]
+    P1["CloudFront + API Gateway<br/>TLS · WAF · SSO authorizer"]
     P2["EKS / ECS — one workload per app"]
     P3["EventBridge Scheduler"]
     P4[("Secrets Manager<br/>insights/&lt;app&gt;/*")]
@@ -488,18 +488,27 @@ flowchart LR
 
 | Concern | Local | Production | Changes in `src/` |
 |---|---|---|---|
-| Sign-in | `?as=` stub | ALB OIDC | nothing |
+| Sign-in | `?as=` stub | corporate SSO, validated by the gateway's authorizer | nothing |
 | Identity to the app | `X-Auth-*` from the local edge | `X-Auth-*` from the gateway | nothing |
 | Connections | sqlite + a REST stub | Databricks SQL, Redshift, internal APIs | nothing |
 | Secrets | a file per secret | Secrets Manager, IAM-scoped per app | nothing |
 | Scheduling | Python cron matcher + SQLite | EventBridge → RunTask / CronJob | nothing |
 | Telemetry | JSONL on disk | stdout → CloudWatch → observability | nothing |
 
-**Networking, briefly.** An ALB terminates TLS and does native OIDC, which is why it is
-the front door rather than API Gateway — API Gateway has no interactive login. Its
-~100-rules-per-load-balancer quota breaks somewhere around 300 apps, so routing moves
-into the cluster (Ingress or a Gateway API HTTPRoute) and the ALB becomes one target.
-NLB appears only where PrivateLink or static IPs are required.
+**Networking, briefly.** The front door is **CloudFront in front of API Gateway**, which
+is the house pattern for a web deployment here and the reason this design does not reach
+for an ALB. CloudFront gives one `*.bms.com` domain, WAF and TLS at the edge, and caches a
+dashboard's static bundle so it never touches compute. API Gateway carries the **SSO
+authorizer** — the piece that turns a corporate session into claims — then reaches the
+workload privately over a VPC Link to an internal NLB. Every load balancer in the path is
+`scheme: internal`; CloudFront is the only thing that is public.
+
+> It is worth being precise about a distinction that is easy to get backwards. An ALB can
+> **authenticate** — `authenticate-oidc` performs the redirect dance itself. API Gateway
+> cannot do that natively; it **validates**, via an authorizer, a session something else
+> issued. That is not a gap here, because the redirect belongs to the corporate IdP either
+> way, and it buys one front door that serves a person with a session cookie and a service
+> with a bearer token through the same routes. One asserting layer, one header shape.
 
 **On M2M, precisely:** Databricks workload identity federation consumes an **OIDC**
 token. Kubernetes projects one (IRSA / Pod Identity); an ECS task role is IAM/SigV4 and

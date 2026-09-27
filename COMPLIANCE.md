@@ -45,7 +45,7 @@ governance is the data platform's, enforced on every path including a notebook.
 | 12 | A build is reproducible and rollback-able | CI refuses an unpinned or `:latest` base. `uv sync --frozen` fails if the lockfile is not current | CI gate | `verify.yml` → "an unpinned :latest base" |
 | 13 | An app cannot run an unsupported SDK | The deploy gate resolves the declared range against the supported window (current major plus two) and refuses a pin | CI gate | `test_the_sdk_floor_gate_can_actually_fail` |
 | 14 | Deploy approval cannot be self-granted | The approval gate is a GitHub environment whose reviewers the platform reconciles from `access.manage`. A tenant's pipeline is a four-line caller onto a central reusable workflow | CI + GitHub | `.github/workflows/deploy.yml` |
-| 15 | Evidence cannot be quietly edited | Telemetry and audit sinks are append-only. Scheduler run state records every run, including ones that died before emitting anything | sink writer, scheduler | `runtime/sinks/*.jsonl` · `tests/test_scheduler_state.py` |
+| 15 | Evidence cannot be quietly edited | The telemetry sink is append-only. Scheduler run state records every run, including ones that died before emitting anything | sink writer, scheduler | `runtime/sinks/*.jsonl` · `tests/test_scheduler_state.py` |
 
 ---
 

@@ -14,7 +14,7 @@ answers which question — read [`../ARCHITECTURE.md`](../ARCHITECTURE.md) first
 | | Decision | Why it was hard |
 |---|---|---|
 | [ADR-001](0001-platform-shape-and-reuse-strategy.md) | What the substrate **is** — a versioned SDK in its own repo with generated scaffolds — and how code gets onto it: a four-line CI caller, one platform base image, two archetypes | Tenant autonomy vs. the cost of upgrading twelve dependants |
-| [ADR-002](0002-tenant-isolation-and-data-access.md) | Shared data connections are **brokered, not handed out** — and the isolation line that draws | Operability for a team of three vs. what a compliance partner will accept |
+| [ADR-002](0002-tenant-isolation-and-data-access.md) | The platform ships **connectors, not a broker** — teams keep their own grants, and we never see a row | Operability for a team of three vs. what a compliance partner will accept |
 | [ADR-003](0003-operator-access-and-tenant-data.md) | Zero standing access to tenant data; redaction that raises at the emit point | Every control here makes the platform team's own job harder |
 | [ADR-004](0004-enforcement-and-platform-rules.md) | Enforce each rule at the earliest layer that makes it impossible to get wrong | Enforcement strength vs. tenant freedom |
 | [ADR-005](0005-deliberate-omissions-and-triggers.md) | Fifteen things deliberately not built, each with the trigger that reverses it | Completeness vs. honesty about who operates this |

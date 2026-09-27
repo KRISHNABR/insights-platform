@@ -136,20 +136,30 @@ listed as a future trigger and is now the design — see ADR-002 §3.)*
 > in ADR-002 — a data service behind HTTP — and it costs a network hop, a service to be paged
 > for, and a second identity problem.
 
-### 11. No machine-to-machine exposure — no API Gateway
+### 11. No machine-to-machine exposure
 
 Apps are reachable by **people in browsers**, authenticated by the corporate IdP. Nothing here
 lets another system, a scheduled process in a different platform, or an agent call an app as a
 tool: no API keys, no per-consumer throttling, no usage plans, no mTLS.
 
-This is why the front door is an ALB rather than API Gateway. ALB does browser SSO natively
-and carries the websockets Streamlit needs; API Gateway does neither, and its real strengths —
-throttling, usage plans, consumer keys — are exactly the things we have no use for **yet**.
+Note what this omission is **not**. It is not "no API Gateway" — the gateway is already in the
+path, because CloudFront in front of API Gateway is the house pattern for a web deployment and
+the SSO authorizer lives there. What is missing is everything the gateway offers a *non-human*
+caller: a second authorizer for bearer tokens, usage plans, consumer keys, throttling per
+consumer.
 
-> **Trigger:** the first machine-to-machine consumer. API Gateway would then sit in front of
-> the same Fargate services rather than replacing the ALB, and the interesting work is not the
-> gateway — it is deciding what a non-human caller's identity means for `require_role()` and
-> for the Unity Catalog grant it reads under.
+That is a better position to be in than it sounds, and it is worth saying plainly at interview:
+because the gateway already terminates every request, adding a machine consumer is configuring
+a second authorizer on routes that already exist, not introducing a tier. An earlier draft of
+this ADR argued the opposite — that the front door should be an ALB *because* API Gateway
+cannot log a person in. That is true of the ALB's native `authenticate-oidc` action and false
+of the pattern actually used here, where an authorizer validates a session the corporate IdP
+issued. The omission survived the correction; the reasoning did not.
+
+> **Trigger:** the first machine-to-machine consumer. The work is not the gateway — it is
+> deciding what a non-human caller's identity means for `require_role()`, and under whose
+> grant it reads. A service account is not a member of `MG-PEOPLE-OPS`, and pretending it is
+> would quietly widen every app's access tiers.
 
 ### 12. Not on Kubernetes
 

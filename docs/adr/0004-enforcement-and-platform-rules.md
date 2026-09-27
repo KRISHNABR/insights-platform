@@ -32,9 +32,9 @@ That observation produced the rule below.
 | Layer | What lives here | Why there |
 |---|---|---|
 | **Generator / template** | repo layout, the four CI callers, `pyproject.toml`, `.gitignore`, `RUNBOOK.md`, **the Dockerfile** | If it is generated, it starts right. The Dockerfile is the one generated file the tenant then *owns* outright — see below, including what that costs |
-| **SDK (runtime)** | credential handling, per-user data scoping, telemetry redaction, identity trust, dataset entitlement | Must hold even if CI is bypassed, and the failure mode is an accident rather than a policy breach |
-| **CI (central reusable workflow)** | manifest schema, dataset entitlement vs catalog, SDK version floor, no secrets, no `:latest`, tests pass | Must never *ship*. The platform owns the pipeline even though it does not own the code |
-| **Human review** | only manifest changes that cross a boundary: a new dataset, a new role, a change to `access.manage` | The judgement calls — and there are few enough that three people can actually do them. Sensitivity is **not** on this list: it is a Unity Catalog tag the data owner sets, not something we review |
+| **SDK (runtime)** | credential custody, identity trust, telemetry redaction, and the rule that a connection comes from the manifest or not at all | Must hold even if CI is bypassed, and the failure mode is an accident rather than a policy breach |
+| **CI (central reusable workflow)** | manifest schema, the connection-engine check, SDK support window, no secrets, no tracked `.env`, no `:latest`, no root `USER`, tests pass | Must never *ship*. The platform owns the pipeline even though it does not own the code |
+| **Human review** | only manifest changes that cross a boundary: a new connection, a change to `access.manage` | The judgement calls — and there are few enough that three people can actually do them. What data an app may read is **not** on this list: that is the data owner's grant in their own system, not something we review |
 | **Documentation** | explanation, rationale, worked examples | **Enforcement of last resort.** If a rule only exists in a doc, assume it is not enforced |
 
 Two consequences of that ordering are worth stating explicitly:
@@ -98,15 +98,22 @@ real conversation and not an image problem — see
 
 **Enforcement strength versus tenant autonomy and platform-team load.**
 
-Stronger enforcement lower in the stack means less tenant freedom. A tenant who needs a data
-client the SDK does not provide is blocked by design, and will be annoyed. We accepted that,
-because the alternative — an escape hatch around the broker — silently voids per-user scoping,
-entitlement and audit, which are the three things the whole design rests on.
+Stronger enforcement lower in the stack means less tenant freedom. A tenant who needs an
+engine the SDK does not ship is blocked by design, and will be annoyed.
 
-The mitigation is not an escape hatch but a **response-time commitment**: if `query()` cannot do
-something a tenant needs, that is a platform gap and we treat it as a bug, not a request to work
-around. The message to tenants is explicit: *if `query()` cannot do something you need, tell us
-rather than working around it — that is a bug on our side, not a limitation on yours.*
+**Be precise about what is actually closed here, because it is narrower than it sounds.**
+The SDK has no escape hatch: `connect()` takes a *name*, never a host or a credential, so
+what an app can reach is declared in `app.yaml` and reviewable in git. The *process* has
+one — nothing stops a tenant importing a driver directly and connecting with their own
+credential. That is not a leak in this decision; it is the residual risk stated plainly in
+[ADR-003](0003-operator-access-and-tenant-data.md), and it is what an in-process library
+means. A platform that claimed otherwise would be claiming containment it cannot enforce.
+
+So the control is not "they cannot", it is "they would have to leave the paved road to do
+it, visibly, in their own repo." The mitigation is a **response-time commitment**: if
+`connect()` cannot do something a tenant needs, that is a platform gap and we treat it as a
+bug, not a request to work around. *Tell us rather than working around it — that is a bug on
+our side, not a limitation on yours.*
 
 ## Alternatives considered
 
@@ -116,7 +123,7 @@ Cheap, familiar, and tenants keep full freedom.
 
 **Why not.** Lint is advisory and bypassable, and it cannot see runtime. It can tell you that a
 line *looks* like it logs a dataframe; it cannot stop one being logged. Every control this design
-depends on — per-user scoping, entitlement, redaction — is a runtime property. Lint is a fine
+depends on — credential custody, identity trust, redaction — is a runtime property. Lint is a fine
 supplement and a poor foundation.
 
 ### B. A policy engine such as OPA, with rules as data
@@ -151,11 +158,13 @@ Documentation is where enforcement goes to be ignored.
 
 **What a tenant cannot do**
 
-* Build their own database client, or reach a data source around `query()`. There is no escape
-  hatch, by design — going around the broker voids per-user scoping, entitlement and audit in one
-  step.
-* Access a dataset they have not declared in `app.yaml`, even if they know its name.
+* Open a connection that is not in `app.yaml` — `connect()` takes a name, and an undeclared
+  name fails. They cannot pass a host, a DSN or a credential at the call site.
+* Put a credential in the manifest, or name their own service identity.
 * Log a record-shaped object.
+
+They *can* import a driver and connect directly with a credential of their own. We do not
+pretend otherwise: see the tension above, and ADR-003's residual risk.
 
 **What we now owe them in return**
 

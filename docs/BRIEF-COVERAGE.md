@@ -49,7 +49,7 @@ data path, which is the only way two or three engineers operate a platform at al
 |---|---|
 | Soft isolation — shared kernel, cluster and control plane, stated plainly rather than implied | [ADR-002](adr/0002-tenant-isolation-and-data-access.md) § The tension |
 | Accepting that the data credential sits in the tenant's own process | [ADR-003](adr/0003-operator-access-and-tenant-data.md) § The gap we cannot close |
-| Organisational recourse as the *actual* control behind the broker bypass alarm | [RUNBOOK](../RUNBOOK.md) §5 |
+| Organisational recourse as the *actual* control when an app reads data we have no record of | [RUNBOOK](../RUNBOOK.md) §5 |
 
 **And the honesty test:** ADR-002 states that if the threat model were a hostile tenant, this
 design would be **wrong**. The trigger that voids it is written down — a tenant that is not a
@@ -103,9 +103,9 @@ justification ages quietly.
 
 | Need | What exists | Proof |
 |---|---|---|
-| **authN** — stubbed SSO | The platform edge. `?as=krishna@corp.example` sets a session; in production the ALB's OIDC action against Entra. The edge **strips every client-supplied `X-Auth-*` header** and injects verified ones | `test_a_client_cannot_assert_its_own_identity` · try the curl in the [README](../README.md) |
-| **authZ** | Three layers: can you reach the app (edge) · can you do this (`require_role`) · may the **app** read this data (broker). `Caller.groups` is a property returning `()` unless trusted, so an app outside the edge fails every check structurally | `test_an_app_run_outside_the_edge_can_read_nothing` |
-| **Shared data connections** | Two, deliberately different kinds: a **warehouse** (SQLite locally, Databricks SQL Warehouse in production) and an **internal REST API** (a 40-line stdlib stub). Same broker, same entitlement, same audit — different adapter | `test_the_wrong_verb_says_which_one_to_use` · `/api/team` in the example app |
+| **authN** — stubbed SSO | The platform edge. `?as=krishna@corp.example` sets a session; in production a corporate SSO session validated by the API Gateway authorizer. The edge **strips every client-supplied `X-Auth-*` header** and injects verified ones | `test_a_client_cannot_assert_its_own_identity` · try the curl in the [README](../README.md) |
+| **authZ** | Two layers here, and a third that is deliberately not ours: can you reach the app (edge) · can you do this (`require_role`) · may the app read this *data* — **the team's own grant in their own data platform**, on every path including a notebook. `Caller.groups` is a property returning `()` unless trusted, so an app outside the edge fails every check structurally | `test_an_app_run_outside_the_edge_can_read_nothing` |
+| **Shared data connections** | Two, deliberately different kinds: a **warehouse** (SQLite locally, Databricks SQL Warehouse in production) and an **internal REST API** (a 40-line stdlib stub). Same `connect()`, same secret binding, same error translation — different connector | `test_a_connection_not_in_the_manifest_cannot_be_opened` · `/api/team` in the example app |
 | **Deployment** | Four generated workflows per app, four lines each, calling one reusable platform pipeline. Build once in dev; uat and prod promote that image | [ARCHITECTURE §8](ARCHITECTURE.md#8--deploying--dev-uat-prod) |
 | **Observability** | Structured logs with app/team/env/request-id/caller/SDK auto-stamped · a separate audit stream · RED metrics per app · a generated dashboard per app · four alarms | [ARCHITECTURE §7a](ARCHITECTURE.md#7a--monitoring--enough-to-actually-operate) |
 
@@ -127,7 +127,7 @@ taken.
 | Tenant writes | request handlers (+ their own frontend for `spa`) | a `main()` |
 | Inherits | routing, sign-in, request ids, access logs, `/healthz` | a service identity, run id, timeout, retries, concurrency, SIGTERM drain, exit-code contract |
 
-**What is identical:** the SDK, the broker, the telemetry rules, the base-image family, the CI
+**What is identical:** the SDK, the connectors, the telemetry rules, the base-image family, the CI
 workflows, and a single `entrypoint.sh` that branches on `kind`. A team needing both writes two
 manifests, not two mental models.
 
@@ -151,15 +151,23 @@ rather than accepting them and failing at deploy.
 aggressively and keep it small*; this one pulls the other way, and the interesting parts of the
 design are where that collision is resolved.
 
-Resolved by **tiering on the data's sensitivity, not the tenant's identity**:
+Resolved by making **the credential and the identity** the boundary — not a sensitivity
+tier the platform maintains a second copy of. Every row below is a thing a tenant cannot
+do by editing their own repo:
 
 | Control | Where |
 |---|---|
-| Declaring a restricted dataset is not enough — the **data owner** must also grant it | [ADR-002 §4](adr/0002-tenant-isolation-and-data-access.md) · `test_declaring_a_restricted_dataset_is_not_enough` |
-| A team cannot mark its own data non-sensitive — `classification` is rejected in a manifest at any depth | `test_mechanism_words_are_refused_at_any_depth` |
-| A job's *unmasking* role comes from the grant, never its own manifest | `test_a_job_without_a_granted_role_is_still_masked` |
-| Telemetry raises on a payload, and on any restricted **field name** | `test_reading_restricted_data_arms_the_field_assertion` |
+| A connection comes from the manifest or not at all — `connect()` takes a *name*, never a host, a DSN or a credential | `test_connect_takes_a_name_and_nothing_that_could_be_a_target` · `test_a_connection_not_in_the_manifest_cannot_be_opened` |
+| A team cannot classify its own data — `classification` is refused at any depth, because that tag is the data owner's | `test_a_tenant_cannot_state_a_classification_at_any_depth` |
+| A team cannot name its own service identity — `sp-<app>` is **derived** from the registered app name | `test_a_tenant_cannot_declare_its_own_service_identity` |
+| A team cannot invent its own authorization vocabulary | `test_an_app_defined_role_block_is_refused` · `test_a_fourth_tier_does_not_exist` |
+| A credential never enters the manifest, including inside `local:` | `test_a_credential_in_the_manifest_is_refused` · `test_a_credential_in_a_local_block_is_still_refused` |
+| An app running outside the edge can read nothing | `test_an_app_run_outside_the_edge_can_read_nothing` · `test_no_connection_without_a_caller_the_platform_vouched_for` |
 | Platform team has no standing access to rows | [ADR-003](adr/0003-operator-access-and-tenant-data.md) |
+
+**What the platform deliberately does *not* control:** which rows a team may read. That is
+their grant in their own data platform, enforced on every path including a notebook — see
+[ADR-002](adr/0002-tenant-isolation-and-data-access.md).
 | In production, Unity Catalog applies column masks and row filters on **every** path, including notebooks | [ADR-002 §2](adr/0002-tenant-isolation-and-data-access.md) |
 
 **Because the reviewer sees the design before onboarding**, [`COMPLIANCE.md`](../COMPLIANCE.md)
@@ -179,8 +187,8 @@ residual risk before they find it.
 flowchart LR
   Q1["<b>Reuse + upgrade</b><br/>12 apps depend on it"] --> A1["ADR-001<br/><i>versioned SDK · floor not pin<br/>deprecation telemetry</i>"]
   Q2["<b>Enforcement</b><br/>where do rules live?"] --> A4["ADR-004<br/><i>earliest layer that makes it<br/>impossible to get wrong</i>"]
-  Q3["<b>Isolation</b><br/>what drew the line?"] --> A2["ADR-002<br/><i>brokered data · tier on the<br/>data's sensitivity</i>"]
-  Q4["<b>Operator access</b><br/>granted · constrained · evidenced"] --> A3["ADR-003<br/><i>none standing · redaction raises<br/>owner-approved break-glass</i>"]
+  Q3["<b>Isolation</b><br/>what drew the line?"] --> A2["ADR-002<br/><i>connectors not a broker · the<br/>credential is the boundary</i>"]
+  Q4["<b>Operator access</b><br/>granted · constrained · evidenced"] --> A3["ADR-003<br/><i>telemetry yes · tenant data never<br/>nothing to break glass on</i>"]
   Q5["<b>Omissions</b><br/>and their triggers"] --> A5["ADR-005<br/><i>fifteen, each with<br/>the trigger that reverses it</i>"]
 ```
 
@@ -221,9 +229,9 @@ it, a major is cut when the list empties rather than on a date. Proven by
 | Layer | What lives here | Why there |
 |---|---|---|
 | **Generator** | repo layout, the four CI callers, `pyproject.toml`, `.gitignore`, the Dockerfile | If it is generated, it starts right. The Dockerfile is the one generated file the tenant then owns — CI checks its base image, pin and final USER |
-| **SDK runtime** | credential handling, identity trust, entitlement, redaction | Must hold **even if CI is bypassed** |
-| **CI** | manifest schema, entitlement vs registry, SDK support window, no secrets, no `:latest` | Must never **ship** |
-| **Human review** | only manifest changes crossing a boundary: a new dataset, a new role, a change to `access.manage` | Few enough that three people can actually do them |
+| **SDK runtime** | credential custody, identity trust, redaction, the declared-connection rule | Must hold **even if CI is bypassed** |
+| **CI** | manifest schema, connection engines, SDK support window, no secrets, no tracked `.env`, no `:latest`, no root `USER` | Must never **ship** |
+| **Human review** | only manifest changes crossing a boundary: a new connection, a change to `access.manage` | Few enough that three people can actually do them |
 | **Documentation** | explanation and worked examples | **Last resort.** If a rule only exists in a doc, assume it is not enforced |
 
 **The diagnostic that generalises:** *what does the platform's day-one guide have to warn people
@@ -241,8 +249,8 @@ runtime cannot.
 
 | Shared by everyone | Never shared |
 |---|---|
-| VPC, cluster, ALB, the edge | their process and task role |
-| The broker, the registry, the log sink | their data scope and grants |
+| VPC, cluster, CloudFront, the gateway, the edge | their process and task role |
+| The connectors, the registry, the log sink | their credentials and their data grants |
 | The CI pipeline and base images | their log group and dashboard |
 | The Databricks workspace | their credentials — **they have none** |
 
@@ -267,11 +275,16 @@ be the real failure.
 | Telemetry — logs, metrics, traces, app metadata | **yes** | it is how we operate |
 | Tenant data rows | **no** | no standing access exists |
 
-**Granted:** a Unity Catalog grant from the **dataset owner** — never self-approved. The platform
-team cannot approve access to data it does not own, and the CLI has no command that would let it.
+**Granted:** nothing, by us — and that is the decision. The platform holds no grant on any
+dataset, so there is no `insights access breakglass` and nothing for one to act on. An
+operator who genuinely needs rows asks **that team's data owner**, in the data owner's own
+system, where it is recorded in an audit we cannot edit and expires there.
 
-**Constrained:** time-boxed, and in production a one-hour maximum `AssumeRole` session whose
-trust policy the data owner controls.
+**Constrained:** by what a telemetry record can *contain* — caller, app, connection, engine,
+duration, row count — rather than by a policy about who may look. A record that structurally
+cannot hold a payload needs no access rules. And by an explicit IAM **`Deny`** on
+`insights/*` for the platform role, which no `Allow` overrides, so the platform team cannot
+read a tenant's credential either.
 
 **Evidenced:** every read writes an audit record; in production Unity Catalog's
 `system.access.audit` is authoritative and the platform team cannot edit it. The tenant is
@@ -305,7 +318,7 @@ could otherwise be read as "this works".
 | DR and SLOs | The first business-critical app |
 | Data discovery in the app platform | None that leads back to us — discovery belongs in Unity Catalog |
 | HTTP data service | The first tenant not on our language stack |
-| Machine-to-machine exposure / API Gateway | The first system or agent calling an app as a tool |
+| Machine-to-machine exposure — a second authorizer, usage plans, consumer keys | The first system or agent calling an app as a tool |
 | **Not on Kubernetes** | Workload-level policy, a mesh, per-tenant NetworkPolicy — **or the org already operating EKS as a shared service** |
 | **No real IaC** | The first real environment. This is what most weakens "production grade" |
 | No CSRF protection | The first state-changing endpoint. Both example apps are read-only |
@@ -334,12 +347,20 @@ full stack and seven behaviour checks, including the two that must **fail**.
 
 These are the reason the code was worth writing, and none is visible from reading the design:
 
-1. **A job has no human caller**, so "may this caller see salaries?" has no answer from corporate
-   groups. The obvious fix — read `access.roles` from the manifest — lets a team unmask
-   compensation by editing its own repo. Roles now come from the **grant**.
-2. **An undeclared dataset and a nonexistent one must return the same error.** A test asserting
-   otherwise failed, correctly: a differentiated error is a discovery oracle that lets any tenant
-   enumerate the registry by guessing names.
-3. **The rendered image never installed the tenant's own dependencies.** Everything passed until
+1. **A job has no human caller**, so "may this caller see salaries?" has no answer from
+   corporate groups. The obvious fix — let the app define its own roles in its manifest —
+   lets a team grant itself capability by editing its own repo. Both that block and a
+   tenant-declared service identity are refused; `sp-<app>` is derived from the registered
+   name, and what a job may read is the data owner's grant.
+2. **A stream nobody writes reads as "nothing happened".** The `audit` stream lost its only
+   writer when the broker was removed, but stayed in `insights logs --stream`. Running the
+   RUNBOOK's own incident command after a real query printed *"no telemetry. Run an app"* —
+   which an operator would read as *no reads occurred*, on the one path where that
+   distinction matters. The CLI now takes its stream choices from the SDK's writers, and a
+   test fails if any stream loses its last one.
+3. **A corporate proxy will intercept `127.0.0.1`.** Every local connection died behind
+   `HTTP_PROXY` until the SDK stopped trusting the environment for loopback. Nothing about
+   the design predicted it; a laptop on the corporate network did.
+4. **The rendered image never installed the tenant's own dependencies.** Everything passed until
    it ran. Found by the verify workflow, not by reading the code — which is the point of having
    one.

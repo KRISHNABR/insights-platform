@@ -24,16 +24,18 @@ In production, the per-app CloudWatch dashboard is the first stop. Four alarms p
 | 5xx rate > 2% over 5 min | one app is broken | Check that app's logs. It is almost never the platform |
 | Job failed after its last retry | a scheduled run gave up | Read the `job_failed` record; the `reason` field names the exception type |
 | Job overran its `timeout` | it was killed mid-run | Check `concurrency` — if `allow`, runs may be piling up |
-| **App queried data it never audited** | **possible bypass of the broker** | **Escalate. See §5** |
+| **One connection failing across many apps** | **a shared system, a rotated credential, or us** | **See §5** |
 
-The last one is the only alarm that is about the platform rather than an app.
+The last one is the only alarm that is about the platform rather than an app: a single
+app failing to connect is that app's problem, but the *same* connection failing for
+everyone at once is a shared system, a credential that rotated, or something we did.
 
 ### Where things are
 
 | What | Local | Production |
 |---|---|---|
 | App logs | `runtime/sinks/events.jsonl` | CloudWatch, `/insights/apps/<name>` |
-| Data audit | `runtime/sinks/audit.jsonl` | Unity Catalog `system.access.audit` (authoritative) + our correlation record |
+| Data audit | **not ours** — we hold only the correlation record in `events.jsonl` | Unity Catalog `system.access.audit`, authoritative and theirs |
 | What is deployed | `control/registry/apps.json` | same, written by CI |
 | Who may read what | not ours — each team's own data platform | Unity Catalog grants (authoritative) |
 
@@ -91,10 +93,14 @@ In order, cheapest first:
 
 ### "Can we use Go / Node / Rust?"
 
-Not today, and be straight about why: the broker is an in-process Python library, so there is no
-way for a non-Python app to reach data. See [ADR-005 omission 10](docs/adr/0005-deliberate-omissions-and-triggers.md).
-The path is a sidecar broker — and note it closes the credential-isolation gap in ADR-003 at the
-same time. If someone genuinely needs this, it is a real project, not a favour.
+Not today, and be straight about why: the SDK is an in-process Python library, so a
+non-Python app gets no identity, no secret binding, no telemetry and no connectors. See
+[ADR-005 omission 10](docs/adr/0005-deliberate-omissions-and-triggers.md).
+The path is a sidecar, or the HTTP data service in
+[ADR-002 alternative D](docs/adr/0002-tenant-isolation-and-data-access.md) — and note that
+either one also closes the credential-isolation residual risk in ADR-003, because the
+credential stops living in the tenant's process. If someone genuinely needs this, it is a
+real project, not a favour.
 
 ### "The platform is making something hard that should be easy"
 
@@ -201,13 +207,17 @@ cost, stated in ADR-004: nobody patches a tenant's base but the tenant.
 
 ### Adding a data connection type
 
-1. Write an adapter class in `insights_sdk/adapters.py` with a `run()` method.
+1. Write a connector class in `insights_sdk/connectors.py`, subclassing `_Base`, with
+   `query()` and a real `probe()`. `_Base.probe()` raises `NotImplementedError` on
+   purpose — a connector that cannot prove a round trip must not claim one.
 2. Register it in `_ENGINES`.
-3. Add its driver signatures to `_SIGNATURES` so its errors translate.
+3. Add its driver signatures to `_SIGNATURES` so its errors translate to a kind that
+   names who fixes it.
 
-It inherits entitlement, grants, masking, audit and the redaction assertions for free, because
-those live in the broker and not in the adapter. **That claim is the reason the broker is shaped
-this way — if you find yourself adding an authorization check inside an adapter, stop.**
+It inherits the trusted-caller check, secret binding, `${VAR}` expansion, the `local:`
+override and the telemetry shape for free, because those live in `connect()` and not in
+the connector. **If you find yourself adding an identity or secret check inside a
+connector, stop** — it belongs one level up, where it applies to every engine.
 
 ### Changing a CI rule
 
@@ -276,30 +286,49 @@ arrived, so it distinguishes "the app is broken" from "the app cannot reach its 
 Platform-wide symptoms: every app failing at once, or the edge not responding. Check the edge
 first — nothing works without it.
 
-### Reading the audit stream
+### Reading the telemetry stream
 
 ```bash
-insights logs --stream audit                        # every read of a governed dataset
-insights logs --stream audit --event dataset_read --json | jq 'select(.masked_fields > 0)'
+insights logs                                   # everything, newest last
+insights logs --app comp-report                 # one app
+insights logs --event connection_failed --json | jq 'select(.kind=="auth")'
 ```
 
-Each record carries caller, dataset, classification, owner, row count and masked-field count —
-and nothing else. There is no payload in it by construction, so this stream can be read by
-anyone operating the platform without that being access to tenant *data*. That distinction is
-the whole of [ADR-003](docs/adr/0003-operator-access-and-tenant-data.md): we see **that** a
-read happened, never **what** was read.
+Each record carries caller, app, connection, engine, duration and row count — and
+nothing else. There is no payload in it by construction, so this stream can be read by
+anyone operating the platform without that being access to tenant *data*. That
+distinction is the whole of
+[ADR-003](docs/adr/0003-operator-access-and-tenant-data.md): we see **that** a query
+happened, never **what** it returned.
 
-### "App queried data it never audited"
+> **There is no separate `audit` stream.** There was one while the platform brokered
+> every read — it carried the dataset, its classification and its owner. It went with
+> the broker (ADR-002): the platform is not in the data path, so it has nothing to put
+> in those fields. `insights logs --stream` refuses the name rather than returning an
+> empty result, because an empty result reads as *"no reads happened"* when the truth
+> is *"nothing records this"* — and the difference matters most during an incident,
+> which is exactly when someone would run it.
 
-The one alarm that suggests the broker was bypassed. Treat as a potential data incident.
+### An app read data and we have no record of it
 
-1. Confirm: compare the app's request volume with its audit records for the same window.
-2. Check Unity Catalog's audit for reads by that app's principal that have no matching
-   correlation record from us.
-3. If confirmed, this is the residual risk named in
-   [ADR-003](docs/adr/0003-operator-access-and-tenant-data.md) §"the gap we cannot close" — the
-   credential lives in the tenant's process. Involve the team's management chain; the recourse
-   here is organisational, which is the premise the whole isolation model rests on.
+The residual risk named in
+[ADR-003](docs/adr/0003-operator-access-and-tenant-data.md): the SDK runs inside the
+tenant's process, so a team *can* open their own connection with their own credential
+and read their own data without the platform seeing it. Treat a report of this as a
+question about our records, not as an accusation.
+
+1. Confirm the gap: compare the data platform's own audit (Unity Catalog, the database's
+   log) for that app's principal against our `connection_opened` / `query_executed`
+   correlation records for the same window.
+2. If reads there have no matching record here, the app is connecting outside the SDK.
+   That is not a control failure — it is the correct description of a platform that does
+   not own its tenants' data, and it is stated as such in ADR-003.
+3. The recourse is organisational, and it is the team's data either way. What we owe is
+   an accurate statement of what our records do and do not cover.
+
+> **What would change this** is the sidecar in §2 ("Can we use Go / Node / Rust?"): a
+> credential the tenant's process never holds. That is the only version of this where
+> the platform's records are complete, and it costs a service to be paged for.
 
 ### We need to see tenant data
 
