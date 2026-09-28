@@ -473,7 +473,7 @@ flowchart LR
 
   subgraph P["PRODUCTION"]
     direction TB
-    P1["CloudFront + API Gateway<br/>TLS · WAF · SSO authorizer"]
+    P1["shared internal ALB<br/>TLS · native OIDC sign-in"]
     P2["EKS / ECS — one workload per app"]
     P3["EventBridge Scheduler"]
     P4[("Secrets Manager<br/>insights/&lt;app&gt;/*")]
@@ -488,27 +488,32 @@ flowchart LR
 
 | Concern | Local | Production | Changes in `src/` |
 |---|---|---|---|
-| Sign-in | `?as=` stub | corporate SSO, validated by the gateway's authorizer | nothing |
+| Sign-in | `?as=` stub | corporate SSO on the ALB listener (Cognito federated to BMS SSO) | nothing |
 | Identity to the app | `X-Auth-*` from the local edge | `X-Auth-*` from the gateway | nothing |
 | Connections | sqlite + a REST stub | Databricks SQL, Redshift, internal APIs | nothing |
 | Secrets | a file per secret | Secrets Manager, IAM-scoped per app | nothing |
 | Scheduling | Python cron matcher + SQLite | EventBridge → RunTask / CronJob | nothing |
 | Telemetry | JSONL on disk | stdout → CloudWatch → observability | nothing |
 
-**Networking, briefly.** The front door is **CloudFront in front of API Gateway**, which
-is the house pattern for a web deployment here and the reason this design does not reach
-for an ALB. CloudFront gives one `*.bms.com` domain, WAF and TLS at the edge, and caches a
-dashboard's static bundle so it never touches compute. API Gateway carries the **SSO
-authorizer** — the piece that turns a corporate session into claims — then reaches the
-workload privately over a VPC Link to an internal NLB. Every load balancer in the path is
-`scheme: internal`; CloudFront is the only thing that is public.
+**Networking, briefly.** Three front doors, for three kinds of caller — and the design does
+not care which one a request came through, because every one of them ends at the edge and
+the app only ever sees `X-Auth-*`.
 
-> It is worth being precise about a distinction that is easy to get backwards. An ALB can
-> **authenticate** — `authenticate-oidc` performs the redirect dance itself. API Gateway
-> cannot do that natively; it **validates**, via an authorizer, a session something else
-> issued. That is not a gap here, because the redirect belongs to the corporate IdP either
-> way, and it buys one front door that serves a person with a session cookie and a service
-> with a bearer token through the same routes. One asserting layer, one header shape.
+- **An employee on the network** reaches a **shared internal ALB**. Its listener runs the
+  corporate OIDC sign-in natively (the ELB Kit: `BMSOIDCEnabled`, an assurance level, an LDAP
+  access group) and passes the signed-in identity to the edge as `x-amzn-oidc-data`. The edge
+  verifies that once and re-issues it as `X-Auth-*`, so no app decodes a token. One ALB, one
+  host rule pointing at the edge; the edge routes to apps from its registry.
+- **Someone on the internet** reaches that same ALB only through **CloudFront** and a DMZ (the
+  DMZ Kit), which is a firewall ticket and a risk assessment, not a config flag. Not needed for
+  any tenant today.
+- **A program** reaches an **API Gateway** whose authorizer validates a bearer token and
+  re-issues the same `X-Auth-*` — the machine-to-machine door, deliberately not built
+  (ADR-005 §11).
+
+Everything behind those doors is `scheme: internal`; nothing in the workload VPC routes to an
+internet gateway. The reason the ALB is shared rather than one per app is the ELB Kit's own: a
+load balancer needs eight free addresses per subnet, and the load-balancer subnets are small.
 
 **On M2M, precisely:** Databricks workload identity federation consumes an **OIDC**
 token. Kubernetes projects one (IRSA / Pod Identity); an ECS task role is IAM/SigV4 and

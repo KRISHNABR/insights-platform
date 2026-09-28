@@ -18,8 +18,7 @@ structured logging, a health check that checks something, and a deployment pipel
 
 ```bash
 mkdir insights-hub && cd insights-hub
-for r in insights-platform insights-sdk insights-headcount-dashboard \
-         insights-comp-report insights-attrition-api insights-directory-sync; do
+for r in insights-platform insights-sdk insights-headcount-dashboard insights-comp-report; do
   git clone "https://github.com/KRISHNABR/$r.git"
 done
 
@@ -44,13 +43,13 @@ curl -b cookies.txt -H "X-Auth-Groups: admin" \
      http://localhost:8080/apps/headcount-dashboard/api/me
 
 # 2 · someone outside the app cannot probe its routes at all
-#     krishna on attrition-api → 403, from the edge, before any app code runs
+#     lokesh on headcount-dashboard → 403, from the edge, before any app code runs
 
 # 3 · a credential in app.yaml is refused, not ignored
 #     add `password: hunter2` to any connection → the manifest fails to load
 
 # 4 · bypass the edge entirely → anonymous, and anonymous can read nothing
-curl http://localhost:8102/api/me
+curl http://localhost:8101/api/me
 
 # 5 · the two logs, which answer two different questions
 uv run insights logs --app headcount-dashboard --startup   # did it boot?
@@ -59,17 +58,19 @@ uv run insights logs --app headcount-dashboard             # what did it do?
 
 ---
 
-## The four example apps
+## The example apps
+
+The two the brief asks for, both published:
 
 | App | Kind | Shows |
 |---|---|---|
 | [headcount-dashboard](https://github.com/KRISHNABR/insights-headcount-dashboard) | `web` / `spa` | a backend plus its own frontend; two engines in one app |
-| [attrition-api](https://github.com/KRISHNABR/insights-attrition-api) | `web` / `api` | JSON only, no frontend |
 | [comp-report](https://github.com/KRISHNABR/insights-comp-report) | `job` | a schedule, retries, concurrency, an output artefact |
-| [directory-sync](https://github.com/KRISHNABR/insights-directory-sync) | `job` | the REST connector, and a credential from the secret store |
 
-All four were created with `insights new-app` and then filled in — nothing in them was
-hand-assembled.
+Both were created with `insights new-app` and then filled in — nothing in them was
+hand-assembled. Two more (`attrition-api`, a JSON-only `web` app, and `directory-sync`, a `job`
+using the REST connector) were generated the same way to exercise the generator; they live only
+on the author's machine and are not published.
 
 ---
 
@@ -94,7 +95,7 @@ insights-platform/
     ├── edge/                        the front door: sign-in, group check, identity injection
     ├── scheduler/                   cron, retries, concurrency, run state in SQLite
     ├── console/                     a read-only fleet view, hosted as a tenant of itself
-    └── fakes/                       a warehouse, a REST API and a secret store, for local
+    └── fakes/                       a warehouse and a REST API, for local (secrets: each app's own .env)
 ```
 
 The SDK is [its own repository](https://github.com/KRISHNABR/insights-sdk).
@@ -136,7 +137,7 @@ a team believing a rule is in force when it is not.
 | `insights new-app NAME --kind web\|job --team T --owner GROUP` | Generate an app: manifest, Dockerfile, source stub, runbook, four pipelines |
 | `insights doctor` | Everything CI will check, checked locally first — **the same code**, so they cannot disagree |
 | `insights connections [--probe]` | What this app talks to, whether its secrets resolve, whether it can connect |
-| `insights up [--port N]` | The whole local platform: apps, the edge, the console |
+| `insights up [--port N]` | The local platform: the edge, the console and the two stubs. Apps start on their own with `insights serve` |
 | `insights run` | Run a job now, exactly as the scheduler would |
 | `insights logs --app X [--startup]` | Telemetry, or the process log |
 | `insights status` | Every registered app |
@@ -163,6 +164,44 @@ Each with the trigger that would change our minds, in
 No data catalog. No governance layer — Unity Catalog owns that, enforced on every path
 including a notebook. No portal. No second language. No base images. Not hard
 isolation, and we say so rather than implying more.
+
+---
+
+## What I'd do next
+
+**Done since the commits the reviewers pinned** (all on `main`, none changes a decision): the
+verify workflow no longer asserts the removed broker; local secrets live in each app's own
+`.env` and CI refuses a committed one; the `audit` telemetry stream that nothing wrote is gone
+and a test fails if any stream loses its writer; `compliance-report` reads the deployment
+registry and names what it could not cover; every test a document cites must exist, or the
+build fails.
+
+**Next, in the order I would build them** — each is an [ADR-005](docs/adr/0005-deliberate-omissions-and-triggers.md)
+trigger that has fired or is about to:
+
+1. **Make promotion real.** Three GitHub environments with reviewers reconciled from
+   `access.manage`; promote by `ref`, never rebuild; refuse a prod deploy of a ref that was
+   never live in uat. The contract exists in the generated workflows; the infrastructure does
+   not. People Analytics needs somewhere other than prod to sign off in.
+2. **The first real environment**, as CDK in Python under `infra/`, feeding Auto PTP.
+3. **A real IAM role per app**, generated from `sp-<app>`: it may read `insights/<app>/*` and
+   nothing else, and the platform's own role carries an explicit `Deny` on `insights/*`.
+4. **Scheduling on EventBridge Scheduler**, honouring `job.timezone` — the local scheduler is
+   UTC-only while comp-report declares `Europe/Dublin`, which is a real gap.
+5. **Access review and evidence export**: `compliance-report --since --until --format json`,
+   joined to CloudTrail's `GetSecretValue` events. This is what turns ADR-003 from a design into
+   something a compliance partner can check.
+6. **The Streamlit shape**, once an identity shim and a health sidecar exist (ADR-005 §15).
+7. **Image scanning and a base-image age view** — the stated price of tenant-owned Dockerfiles.
+8. **Diagnostics as workflows** so a tenant can read their own task logs without AWS access.
+9. **CSRF protection in `web_app()`** — the console's *Run now* is the platform's first
+   state-changing endpoint, so ADR-005 §14's trigger has fired on the platform's own app.
+10. **`insights retire-app`** — reconcile in reverse.
+
+**Not yet, and what would change that:** a portal (non-engineer tenants, or onboarding faster
+than one team a fortnight); Kubernetes (per-tenant network policy, or the org already runs EKS
+as a shared service — which it does, so this is the one to argue); a policy engine (rules owned
+by people who do not write Python).
 
 ---
 

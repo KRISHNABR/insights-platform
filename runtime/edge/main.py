@@ -100,7 +100,8 @@ async def proxy(app_name: str, path: str, request: Request):
     # app never runs a line of code for them. `groups` is reconciled from the app's
     # manifest at deploy time - the edge does not read tenant manifests.
     #
-    # Layer 2 (require_role) and layer 3 (dataset entitlement) still apply inside.
+    # Layer 2 (require_role inside the app) still applies; which rows the app may read
+    # is the data platform's grant to sp-<app>, not ours (ADR-002).
     allowed = set(entry.get("groups") or ())
     caller_groups = set(USERS[subject]["groups"])
     if allowed and not (allowed & caller_groups):

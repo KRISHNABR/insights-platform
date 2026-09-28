@@ -286,19 +286,22 @@ cannot hold a payload needs no access rules. And by an explicit IAM **`Deny`** o
 `insights/*` for the platform role, which no `Allow` overrides, so the platform team cannot
 read a tenant's credential either.
 
-**Evidenced:** every read writes an audit record; in production Unity Catalog's
-`system.access.audit` is authoritative and the platform team cannot edit it. The tenant is
-notified via an EventBridge rule on the AssumeRole event.
+**Evidenced:** every query writes a `query_executed` record — connection, engine, duration, row
+count, and the caller, which for a job is exactly `sp-<app>`. In production Unity Catalog's
+`system.access.audit` is the authoritative record of who read what, and the platform team cannot
+edit it; CloudTrail records every read of a secret, including any attempt by the platform's own
+role, which is denied.
 
 **The structural control**, and the reason this is not just policy: telemetry
 **cannot carry payloads** — the logger *raises* at the emit point rather than being scrubbed at
 the sink, because scrubbing at the sink fails open. Anything the scrubber does not recognise has
 already left the process.
 
-**What is honestly not built:** the break-glass `request`/`approve` commands. The data model,
-the evidence trail and the compliance report all exist; the CLI verbs do not. ADR-003 has a
-section saying exactly this, because `insights compliance-report` renders break-glass events and
-could otherwise be read as "this works".
+**What is honestly not built:** a periodic access review and an evidence export
+(`compliance-report --since --until --format json`, joined to CloudTrail). It is second on the
+"what I'd do next" list because it is what turns ADR-003 from a design into something a
+compliance partner can check without trusting us. There is deliberately no break-glass command
+to build: the platform holds no grant on any dataset, so there is nothing for one to act on.
 
 ---
 

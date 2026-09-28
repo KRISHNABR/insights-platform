@@ -84,15 +84,15 @@ jobs:
         run: |
           uv run python .platform/control/cli/reconcile.py \
             --app "${{ inputs.app }}" --env "${{ inputs.environment }}" --manifest app.yaml
-          # - access.roles[]        -> corporate groups + the edge's authz table
-          # - access.manage         -> GitHub environment reviewers + IAM trust
-          # - data[]                -> IAM policy on the task role, scoped to
-          #                            exactly the secrets those datasets need
+          # - access.manage         -> the edge's authz table (union of the tiers),
+          #                            GitHub environment reviewers, IAM trust
+          # - connections[].secret  -> secret slots insights/<app>/<name>, readable
+          #                            by the app's own task role (sp-<app>) only
           # - runtime.size          -> ECS cpu/memory/desired count
-          # - web.route             -> ALB listener rule
-          # - job.*                 -> EventBridge Scheduler (schedule, timeout,
+          # - web.route             -> a route in the edge's table (one ALB rule -> edge)
+          # - job.*                 -> EventBridge Scheduler (schedule, timezone, timeout,
           #                            retries, concurrency, catchup)
-          # - outputs[]             -> S3 prefix + lifecycle rule
+          # - output() artefacts    -> S3 prefix + lifecycle rule
 
       - name: Deploy
         run: |

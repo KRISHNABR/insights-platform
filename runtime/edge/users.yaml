@@ -12,13 +12,16 @@ users:
 
   vidya@corp.example:
     name: Vidya Raman
-    # Owns the restricted dataset and holds the role that unmasks it.
+    # An owner of comp-report (MG-PEOPLE-ANALYTICS is its owners group), so she can run
+    # it from the console. `comp-analyst` is an ordinary directory group with no meaning
+    # to the platform - a reminder that groups are the IdP's, tiers are the manifest's.
     groups: [MG-PEOPLE-ANALYTICS, comp-analyst]
 
   lokesh@corp.example:
     name: Lokesh Iyer
-    # Deliberately NOT a comp-analyst. Reaches the restricted dataset, sees it masked.
-    # They are the proof that entitlement and field-level access are different questions.
+    # In MG-PEOPLE-ANALYTICS but in none of headcount-dashboard's groups, so the edge
+    # refuses him there with a 403 before any app code runs. He is the demo's
+    # "someone outside the app" - reachable apps are decided per app, not per person.
     groups: [MG-PEOPLE-ANALYTICS]
 
   suraj@corp.example:

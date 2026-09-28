@@ -168,7 +168,7 @@ pretend otherwise: see the tension above, and ADR-003's residual risk.
 
 **What we now owe them in return**
 
-A **response-time commitment**. If `query()` cannot do something a tenant legitimately needs,
+A **response-time commitment**. If `connect()` cannot do something a tenant legitimately needs,
 that is a platform gap and we treat it as a bug, not as a request to work around. Without that
 commitment, a strict boundary becomes an obstruction and teams will route around the platform
 entirely — which is worse than a weaker boundary.

@@ -6,7 +6,6 @@
     "sdk": "0.1.0",
     "path": "../insights-headcount-dashboard",
     "schedule": null,
-    "restricted": false,
     "port": null
   },
   "comp-report": {
@@ -15,7 +14,6 @@
     "sdk": "0.1.0",
     "path": "../insights-comp-report",
     "schedule": "0 6 * * MON",
-    "restricted": true,
     "port": null
   }
 }

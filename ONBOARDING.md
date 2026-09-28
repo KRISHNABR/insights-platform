@@ -230,7 +230,8 @@ connections:
     secret: hr-warehouse-token  # a NAME. Never a value
 ```
 
-Put the value in the secret store, not in the file:
+Locally, put the value in `.env` in your own repo — it is gitignored, and CI refuses a
+committed one. In dev and prod `.env` is not read at all; the platform injects the value from:
 
 ```
 insights/forecast-dashboard/hr-warehouse-token
@@ -296,8 +297,9 @@ uv run insights run        # jobs
 uv run insights up         # the whole local platform, including the edge
 ```
 
-`uv run insights up` starts a stub warehouse, a stub directory API, a fake secret store, every
-registered app, the console and the edge on `localhost:8080`. Sign in by adding
+`uv run insights up` starts a stub warehouse, a stub directory API, the console and the edge on
+`localhost:8080`. Apps are not started by it — each runs from its own repo with
+`uv run insights serve`, and registers itself. Sign in by adding
 `?as=krishna@corp.example` to any URL once — that is the entire local login.
 
 ---

@@ -56,7 +56,7 @@ to debug at 2am — for rules that fit on one page.
 
 ### 4. No per-tenant infrastructure
 
-Every tenant shares the runtime, the broker and the control plane (ADR-002).
+Every tenant shares the cluster, the edge and the control plane (ADR-002).
 
 > **Trigger:** a tenant that is **not** a team of employees — a contractor, a joint venture, an
 > acquired company — which invalidates the "organisational recourse" premise the whole isolation
@@ -122,9 +122,9 @@ read it**, in a system with weaker controls than the one that already does this 
 > Catalog. The only thing that would change here is `insights connections` linking out to the UC
 > entry for a dataset a team is already entitled to — a convenience, not a catalog.
 
-### 10. No HTTP data service — the broker is an in-process library
+### 10. No HTTP data service — the SDK is an in-process library
 
-The broker only works for tenants on our language stack. A team wanting to build in Go or
+The SDK only works for tenants on our language stack. A team wanting to build in Go or
 TypeScript cannot consume the platform's data path at all.
 
 *(An earlier version of this ADR also listed per-user credential passthrough here. It is no
@@ -142,19 +142,18 @@ Apps are reachable by **people in browsers**, authenticated by the corporate IdP
 lets another system, a scheduled process in a different platform, or an agent call an app as a
 tool: no API keys, no per-consumer throttling, no usage plans, no mTLS.
 
-Note what this omission is **not**. It is not "no API Gateway" — the gateway is already in the
-path, because CloudFront in front of API Gateway is the house pattern for a web deployment and
-the SSO authorizer lives there. What is missing is everything the gateway offers a *non-human*
-caller: a second authorizer for bearer tokens, usage plans, consumer keys, throttling per
-consumer.
+Be precise about what the front door is, because it decides where a machine caller would enter.
+Here there are three, for three kinds of caller. An employee on the network reaches a **shared
+internal ALB** whose listener runs the corporate OIDC sign-in natively (the ELB Kit's
+`BMSOIDCEnabled`, with an assurance level and an LDAP access group). Someone on the internet
+reaches the same ALB only through a **CloudFront** distribution and a DMZ (the DMZ Kit). A
+program reaches an **API Gateway** whose authorizer validates a bearer token. The first two exist
+for people; the third is the one this omission is about, and it is not built.
 
-That is a better position to be in than it sounds, and it is worth saying plainly at interview:
-because the gateway already terminates every request, adding a machine consumer is configuring
-a second authorizer on routes that already exist, not introducing a tier. An earlier draft of
-this ADR argued the opposite — that the front door should be an ALB *because* API Gateway
-cannot log a person in. That is true of the ALB's native `authenticate-oidc` action and false
-of the pattern actually used here, where an authorizer validates a session the corporate IdP
-issued. The omission survived the correction; the reasoning did not.
+So adding a machine consumer is not "add a gateway" — it is a second authorizer on a gateway that
+already exists in the estate, plus the work that actually matters (below). An earlier draft of
+this ADR argued about ALB versus API Gateway as if one had to be chosen; that was the wrong
+question. The omission survived the correction; the reasoning did not.
 
 > **Trigger:** the first machine-to-machine consumer. The work is not the gateway — it is
 > deciding what a non-human caller's identity means for `require_role()`, and under whose

@@ -1,8 +1,8 @@
 """Stub internal REST API - the employee directory.
 
 Forty lines of stdlib standing in for a real internal service. It exists to prove that a
-SECOND kind of shared connection goes through the identical broker: same entitlement
-check, same audit record, different adapter.
+SECOND kind of connection goes through the identical `connect()`: same trusted-caller
+check, same secret binding, same telemetry shape - a different connector (`rest`).
 
     python runtime/fakes/directory/serve.py [port]
 """

@@ -280,7 +280,7 @@ insights logs --app headcount-dashboard             # it booted - what did it do
 an app that dies on import leaves nothing in telemetry, because it never got far enough to
 emit any — so the structured view is empty and looks like "no traffic" rather than "crashed".
 
-Then `/healthz`, which resolves every dataset the app declared and checks its credential
+Then `/healthz`, which opens every connection the app declared and checks its credential
 arrived, so it distinguishes "the app is broken" from "the app cannot reach its data".
 
 Platform-wide symptoms: every app failing at once, or the edge not responding. Check the edge
@@ -336,7 +336,7 @@ We have no standing access, and that is deliberate.
 
 1. Request a **Unity Catalog grant from the dataset owner**, time-boxed. We cannot self-approve.
 2. It is recorded in UC's audit, which we cannot edit, and the tenant is notified.
-3. Afterwards, ask why telemetry was insufficient. **If break-glass is becoming routine, either
+3. Afterwards, ask why telemetry was insufficient. **If asking a data owner for rows is becoming routine, either
    the telemetry is inadequate or the control is theatre.** Either way it means a redesign, not
    tolerance.
 
@@ -349,7 +349,7 @@ Read the error — they name the rule and the ADR. The common ones:
 | `'classification' may not appear in a tenant manifest` | They tried to mark their own data's sensitivity. That is the data owner's, in the data platform |
 | `runtime.sdk is pinned` | They wrote `==`. Floors only |
 | `access.manage.owners is required` | No owner group, or they used an individual |
-| `not entitled to X` | Declared in neither `app.yaml` nor granted |
+| `kind=not_declared` | The connection is not in `app.yaml` — add it under `connections:` |
 
 
 None of these should be worked around. If one is wrong, fix the rule.

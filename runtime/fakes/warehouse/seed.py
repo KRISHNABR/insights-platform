@@ -1,9 +1,8 @@
 """Seed the stub warehouse.
 
 A SQLite file standing in for the analytics warehouse. The brief invites fakes; what
-matters is that the SHAPE is right - three tables, one of them genuinely sensitive, one
-of them deliberately unused so the test suite can prove entitlement is enforced rather
-than assumed.
+matters is that the SHAPE is right - three tables, one of them genuinely sensitive
+(compensation), so a query record can be shown to carry the row COUNT and never a row.
 
     python runtime/fakes/warehouse/seed.py [path]
 """

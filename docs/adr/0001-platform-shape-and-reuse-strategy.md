@@ -78,10 +78,11 @@ a renamed input, a new required secret — means cutting `v2`, not moving `v1`. 
 SHA in twelve tenant repos would make improving the pipeline a twelve-PR job, which is exactly
 what this whole ADR exists to avoid.
 
-**Building.** A tenant's Dockerfile is generated once and then theirs (ADR-004). It builds on `runtime.base` — one of a small published
-family — and the platform renders the image. The base carries the runtime, the SDK, the non-root
-user, the entrypoint and the health contract, so a platform CVE is one rebuild and a redeploy
-rather than 25 pull requests. Nothing floats: a tenant cannot pin, and cannot drift.
+**Building.** A tenant's Dockerfile is generated once and then theirs (ADR-004). We publish no
+base image. CI checks exactly two things about the file — the base is pinned (never `:latest`)
+and the final `USER` is not root — and the tenant owns everything else. The cost is stated in
+ADR-004: a base-image fix reaches an app only when that app bumps its own `FROM`, so what closes
+the gap is image scanning and a fleet view of base age (on the ADR-005 list), not ownership.
 
 **Running.** Two archetypes, one platform:
 
